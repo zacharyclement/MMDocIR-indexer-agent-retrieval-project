@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "indexer"
+version = "0.1.0"
+description = "ColPali PDF indexing pipeline for Milvus Lite"
+requires-python = ">=3.10"
+dependencies = [
+    "colpali-engine>=0.3.0",
+    "Pillow>=10.0.0",
+    "pydantic-settings>=2.2.1",
+    "pymilvus>=2.4.4",
+    "pymupdf>=1.24.2",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "transformers>=4.41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.4.2",
+    "isort>=5.13.2",
+    "mypy>=1.10.0",
+    "pytest>=8.2.0",
+    "ruff>=0.4.8",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+src_paths = ["src", "tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+mypy_path = "src"
+packages = ["indexer"]
