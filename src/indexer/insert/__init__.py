@@ -1,1 +1,1 @@
-"""Milvus insert helpers for the indexing pipeline."""
+"""Qdrant insert helpers for the indexing pipeline."""

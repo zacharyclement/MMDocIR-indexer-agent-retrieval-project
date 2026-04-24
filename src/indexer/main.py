@@ -1,4 +1,4 @@
-"""CLI entry point for the ColPali Milvus indexing pipeline."""
+"""CLI entry point for the ColPali Qdrant indexing pipeline."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Sequence
 
-from indexer.flatten.page_patches import build_patch_rows
+from indexer.flatten.page_patches import build_page_point
 from indexer.index_report import IndexReportWriter
-from indexer.insert.milvus_schema import ensure_collection
 from indexer.load_docs.domain_mapping import load_domain_mapping
 from indexer.load_docs.targets import resolve_target_documents
 from indexer.shared.config import Settings
@@ -22,7 +21,7 @@ from indexer.validate.inputs import find_mapping_gaps, validate_target_files
 
 if TYPE_CHECKING:
     from indexer.encode.colpali import ColPaliPageEncoder
-    from indexer.insert.milvus_writer import MilvusInsertWriter
+    from indexer.insert.qdrant_writer import QdrantInsertWriter
     from indexer.render.pdf_pages import PdfPageRenderer
 
 LOGGER = get_logger(__name__)
@@ -36,7 +35,7 @@ class IndexingService:
         self._report_writer: IndexReportWriter | None = None
         self._renderer: PdfPageRenderer | None = None
         self._encoder: ColPaliPageEncoder | None = None
-        self._writer: MilvusInsertWriter | None = None
+        self._writer: QdrantInsertWriter | None = None
 
     def index(self, file_name: str | None) -> int:
         """Index one file or all files and return the inserted row count."""
@@ -48,14 +47,11 @@ class IndexingService:
             mapping,
             file_name,
         )
+        encoder = self._get_encoder()
         writer = self._get_writer()
-        ensure_collection(
-            client=writer.client,
-            collection_name=self._settings.collection_name,
+        writer.ensure_collection(
             recreate_collection=self._settings.recreate_collection,
-            index_type=self._settings.index_type,
-            metric_type=self._settings.metric_type,
-            nlist=self._settings.nlist,
+            vector_dimension=encoder.embedding_dimension,
         )
 
         run_id = uuid.uuid4().hex
@@ -120,20 +116,20 @@ class IndexingService:
         for rendered_page in renderer.render(target_document.file_path):
             page_count += 1
             patch_embeddings = encoder.encode_page(rendered_page.image)
-            rows = build_patch_rows(
+            point = build_page_point(
                 target_document=target_document,
                 rendered_page=rendered_page,
                 patch_embeddings=patch_embeddings,
                 indexed_at=indexed_at,
                 run_id=run_id,
             )
-            inserted_rows += writer.insert_rows(rows)
+            inserted_rows += writer.upsert_points([point])
             log_event(
                 LOGGER,
                 "index_page_completed",
                 doc_name=target_document.doc_name,
                 page_number=rendered_page.page_number,
-                patch_count=len(rows),
+                patch_count=len(point.embeddings),
             )
 
         return page_count, inserted_rows
@@ -155,12 +151,12 @@ class IndexingService:
             )
         return self._encoder
 
-    def _get_writer(self) -> MilvusInsertWriter:
+    def _get_writer(self) -> QdrantInsertWriter:
         if self._writer is None:
-            from indexer.insert.milvus_writer import MilvusInsertWriter
+            from indexer.insert.qdrant_writer import QdrantInsertWriter
 
-            self._writer = MilvusInsertWriter(
-                db_path=str(self._settings.milvus_db_path),
+            self._writer = QdrantInsertWriter(
+                db_path=str(self._settings.qdrant_path),
                 collection_name=self._settings.collection_name,
             )
         return self._writer
@@ -194,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument(
                 "--recreate-collection",
                 action="store_true",
-                help="Drop and recreate the Milvus collection before indexing.",
+                help="Drop and recreate the Qdrant collection before indexing.",
             )
 
     subparsers.add_parser("show-mapping-gaps")
@@ -239,9 +235,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             _write_stdout(
                 {
                     "collection_name": settings.collection_name,
-                    "metric_type": settings.metric_type,
-                    "index_type": settings.index_type,
-                    "milvus_db_path": str(settings.milvus_db_path),
+                    "qdrant_path": str(settings.qdrant_path),
                 }
             )
             return 0

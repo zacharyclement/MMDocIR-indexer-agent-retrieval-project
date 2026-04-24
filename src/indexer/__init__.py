@@ -1,3 +1,3 @@
-"""Indexing package for ColPali and Milvus Lite."""
+"""Indexing package for ColPali and local Qdrant."""
 
 __all__ = ["main"]

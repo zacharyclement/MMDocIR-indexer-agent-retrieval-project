@@ -39,26 +39,27 @@ class RenderedPage:
 
 
 @dataclass(frozen=True)
-class PatchInsertRow:
-    """Represents one patch embedding row destined for Milvus."""
+class PageInsertPoint:
+    """Represents one page point destined for Qdrant."""
 
     doc_name: str
     domain: str
     page_number: int
-    patch_id: int
     page_uid: str
     file_path: str
-    embedding: list[float]
+    embeddings: list[list[float]]
     source_sha256: str
     page_width: int
     page_height: int
     indexed_at: str
     run_id: str
 
-    def to_milvus_payload(self) -> dict[str, object]:
-        """Return this row as a Milvus insert payload."""
+    def to_qdrant_payload(self) -> dict[str, object]:
+        """Return this point metadata as a Qdrant payload."""
 
-        return asdict(self)
+        payload = asdict(self)
+        payload.pop("embeddings")
+        return payload
 
 
 @dataclass(frozen=True)

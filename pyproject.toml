@@ -5,18 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "indexer"
 version = "0.1.0"
-description = "ColPali PDF indexing pipeline for Milvus Lite"
+description = "ColPali PDF indexing pipeline for local Qdrant"
 requires-python = ">=3.10"
 dependencies = [
-    "colpali-engine>=0.3.0",
+    "colpali-engine==0.3.15",
     "Pillow>=10.0.0",
     "pydantic-settings>=2.2.1",
-    "pymilvus[milvus_lite]>=2.4.4",
     "pymupdf>=1.24.2",
+    "qdrant-client==1.17.1",
     "torch>=2.2.0",
     "torchvision>=0.17.0",
-    "transformers>=4.41.0",
+    "peft==0.18.1",
+    "transformers==5.5.4",
 ]
+
 
 [project.optional-dependencies]
 dev = [
