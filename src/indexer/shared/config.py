@@ -8,13 +8,15 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
 
 class Settings(BaseSettings):
     """Application settings for the indexing pipeline."""
 
     model_config = SettingsConfigDict(env_prefix="INDEXER_", extra="ignore")
 
-    data_dir: Path = Field(default=Path("data"))
+    data_dir: Path = Field(default=PACKAGE_ROOT / "data")
     milvus_db_path: Path = Field(default=Path("milvus_poc.db"))
     collection_name: str = Field(default="colpali_page_patches")
     model_name: str = Field(default="vidore/colpali-v1.2")

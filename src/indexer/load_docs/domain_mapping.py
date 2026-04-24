@@ -20,6 +20,17 @@ DOMAIN_MAPPING_ENTRIES: tuple[DomainMappingEntry, ...] = (
     DomainMappingEntry(doc_nam="honor_watch_gs_pro.pdf", domain="Guidebook"),
     DomainMappingEntry(doc_nam="nova_y70.pdf", domain="Guidebook"),
     DomainMappingEntry(doc_nam="watch_d.pdf", domain="Guidebook"),
+    DomainMappingEntry(doc_nam="2024.ug.eprospectus.pdf", domain="Brochure"),
+    DomainMappingEntry(doc_nam="Bergen-Brochure-en-2022-23.pdf", domain="Brochure"),
+    DomainMappingEntry(doc_nam="PG_2021.03.04_US-Views-on-China_FINAL.pdf", domain="Research report / Introduction"),
+    DomainMappingEntry(doc_nam="PG_2020.03.09_US-Germany_FINAL.pdf", domain="Research report / Introduction"),
+    DomainMappingEntry(doc_nam="fd76bbefe469561966e5387aa709c482.pdf", domain="Academic paper"),
+    DomainMappingEntry(doc_nam="379f44022bb27aa53efd5d322c7b57bf.pdf", domain="Research report / Introduction"),
+    DomainMappingEntry(doc_nam="efd88e41c5f2606c57929cac6c1c0605.pdf", domain="Research report / Introduction"),
+    DomainMappingEntry(doc_nam="edb88a99670417f64a6b719646aed326.pdf", domain="Administration/Industry file"),
+    DomainMappingEntry(doc_nam="finalpresentationdeck-whatwhyhowofcertificationsocial-160324220748_95.pdf", domain="Brochure"),
+    DomainMappingEntry(doc_nam="avalaunchpresentationsthatkickasteriskv3copy-150318114804-conversion-gate01_95.pdf", domain="Tutorial/Workshop"),
+    DomainMappingEntry(doc_nam="finalmediafindingspdf-141228031149-conversion-gate02_95.pdf", domain="Research report / Introduction"),
 )
 
 
