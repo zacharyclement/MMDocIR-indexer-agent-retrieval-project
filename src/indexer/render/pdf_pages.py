@@ -40,7 +40,7 @@ class PdfPageRenderer:
                     with Image.open(io.BytesIO(image_bytes)) as image:
                         rgb_image = image.convert("RGB")
                         yield RenderedPage(
-                            page_number=loop_index + 1,
+                            page_number=loop_index,
                             width=rgb_image.width,
                             height=rgb_image.height,
                             image=rgb_image,

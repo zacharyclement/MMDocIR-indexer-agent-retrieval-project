@@ -14,7 +14,7 @@ def test_build_page_point_preserves_page_metadata() -> None:
         source_sha256="abc123",
     )
     rendered_page = RenderedPage(
-        page_number=1,
+        page_number=0,
         width=100,
         height=200,
         image=object(),
@@ -28,8 +28,8 @@ def test_build_page_point_preserves_page_metadata() -> None:
         run_id="run123",
     )
 
-    assert point.page_number == 1
-    assert point.page_uid == "2310.05634v2.pdf::page::1"
+    assert point.page_number == 0
+    assert point.page_uid == "2310.05634v2.pdf::page::0"
     assert point.page_width == 100
     assert point.page_height == 200
     assert point.embeddings == [[0.1] * 128, [0.2] * 128]

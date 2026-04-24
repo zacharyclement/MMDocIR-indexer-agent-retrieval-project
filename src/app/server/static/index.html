@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retrieval Chat POC</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: #f5f7fb;
+        color: #1f2937;
+      }
+
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .panel {
+        background: #ffffff;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 1.8rem;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      label {
+        display: block;
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        box-sizing: border-box;
+        border-radius: 10px;
+        border: 1px solid #d1d5db;
+        padding: 10px 12px;
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      button {
+        border: none;
+        background: #2563eb;
+        color: #ffffff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.65;
+        cursor: wait;
+      }
+
+      .messages {
+        display: grid;
+        gap: 12px;
+      }
+
+      .message {
+        border-radius: 12px;
+        padding: 14px;
+        white-space: pre-wrap;
+      }
+
+      .message.user {
+        background: #dbeafe;
+      }
+
+      .message.assistant {
+        background: #eef2ff;
+      }
+
+      .citations {
+        display: grid;
+        gap: 10px;
+      }
+
+      .citation {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .meta {
+        color: #475569;
+        font-size: 0.92rem;
+      }
+
+      .status {
+        min-height: 24px;
+        font-size: 0.95rem;
+        color: #475569;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="panel">
+        <h1>Retrieval Chat POC</h1>
+        <p>
+          Ask questions against the locally indexed Qdrant collection. The agent can optionally filter by domain and will cite retrieved pages when available.
+        </p>
+        <div class="controls">
+          <div>
+            <label for="model-name">Model</label>
+            <select id="model-name">
+              <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+              <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            </select>
+          </div>
+          <div>
+            <label for="domain-filter">Domain filter</label>
+            <input id="domain-filter" type="text" placeholder="Optional exact domain name" />
+          </div>
+          <div>
+            <label for="thread-id">Thread ID</label>
+            <input id="thread-id" type="text" placeholder="Auto-generated on first message" />
+          </div>
+        </div>
+        <label for="message-input">Message</label>
+        <textarea id="message-input" placeholder="Ask a question about the indexed documents."></textarea>
+        <div style="margin-top: 12px; display: flex; gap: 12px;">
+          <button id="send-button" type="button">Send</button>
+        </div>
+        <p class="status" id="status-text"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Conversation</h2>
+        <div class="messages" id="messages"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Sources</h2>
+        <div class="citations" id="citations"></div>
+      </section>
+    </main>
+
+    <script>
+      const sendButton = document.getElementById("send-button");
+      const messageInput = document.getElementById("message-input");
+      const modelInput = document.getElementById("model-name");
+      const domainInput = document.getElementById("domain-filter");
+      const threadInput = document.getElementById("thread-id");
+      const messagesContainer = document.getElementById("messages");
+      const citationsContainer = document.getElementById("citations");
+      const statusText = document.getElementById("status-text");
+
+      function appendMessage(role, text) {
+        const node = document.createElement("div");
+        node.className = `message ${role}`;
+        node.textContent = text;
+        messagesContainer.appendChild(node);
+      }
+
+      function renderCitations(citations) {
+        citationsContainer.innerHTML = "";
+        if (!citations.length) {
+          const emptyState = document.createElement("p");
+          emptyState.className = "meta";
+          emptyState.textContent = "No retrieval citations were returned for this turn.";
+          citationsContainer.appendChild(emptyState);
+          return;
+        }
+
+        citations.forEach((citation) => {
+          const node = document.createElement("div");
+          node.className = "citation";
+          node.innerHTML = `
+            <strong>${citation.doc_name}</strong>
+            <div class="meta">Domain: ${citation.domain}</div>
+            <div class="meta">Page: ${citation.page_number}</div>
+            <div class="meta">File: ${citation.file_path}</div>
+            <div class="meta">Rerank score: ${citation.rerank_score.toFixed(3)}</div>
+          `;
+          citationsContainer.appendChild(node);
+        });
+      }
+
+      async function sendMessage() {
+        const message = messageInput.value.trim();
+        if (!message) {
+          statusText.textContent = "Enter a message before sending.";
+          return;
+        }
+
+        const domain = domainInput.value.trim();
+        const payload = {
+          message,
+          thread_id: threadInput.value.trim() || null,
+          model_name: modelInput.value,
+          domains: domain ? [domain] : null,
+        };
+
+        appendMessage("user", message);
+        statusText.textContent = "Waiting for response...";
+        sendButton.disabled = true;
+
+        try {
+          const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || "Chat request failed.");
+          }
+          threadInput.value = data.thread_id;
+          appendMessage("assistant", data.answer);
+          renderCitations(data.citations || []);
+          messageInput.value = "";
+          statusText.textContent = `Thread ${data.thread_id} • ${data.model_name}`;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          statusText.textContent = message;
+        } finally {
+          sendButton.disabled = false;
+        }
+      }
+
+      sendButton.addEventListener("click", sendMessage);
+      messageInput.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          sendMessage();
+        }
+      });
+    </script>
+  </body>
+</html>

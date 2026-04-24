@@ -19,10 +19,10 @@ def test_qdrant_insert_writer_uses_local_path(tmp_path: Path) -> None:
 
 
 def test_build_point_id_returns_deterministic_uuid() -> None:
-    point_id = _build_point_id("watch_d.pdf::page::1")
+    point_id = _build_point_id("watch_d.pdf::page::0")
 
     assert isinstance(point_id, UUID)
-    assert point_id == _build_point_id("watch_d.pdf::page::1")
+    assert point_id == _build_point_id("watch_d.pdf::page::0")
 
 
 def test_qdrant_insert_writer_upserts_points(tmp_path: Path) -> None:
@@ -37,8 +37,8 @@ def test_qdrant_insert_writer_upserts_points(tmp_path: Path) -> None:
             PageInsertPoint(
                 doc_name="watch_d.pdf",
                 domain="Tutorial/Workshop",
-                page_number=1,
-                page_uid="watch_d.pdf::page::1",
+                page_number=0,
+                page_uid="watch_d.pdf::page::0",
                 file_path="data/watch_d.pdf",
                 embeddings=[[0.1] * 128, [0.2] * 128],
                 source_sha256="abc123",

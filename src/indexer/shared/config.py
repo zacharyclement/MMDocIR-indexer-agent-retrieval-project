@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=PACKAGE_ROOT / "data")
     qdrant_path: Path = Field(default=Path("qdrant_data"))
     collection_name: str = Field(default="colpali_page_patches")
-    model_name: str = Field(default="vidore/colqwen2-v1.0")
+    model_name: str = Field(default="vidore/colqwen2.5-v0.2")
     device: str = Field(default="auto")
     render_zoom: float = Field(default=2.0)
     batch_size_pages: int = Field(default=1)
