@@ -141,6 +141,10 @@
             <input id="domain-filter" type="text" placeholder="Optional exact domain name" />
           </div>
           <div>
+            <label for="report-filter">Report filename</label>
+            <input id="report-filter" type="text" placeholder="Optional exact filename, e.g. Independents-Report.pdf" />
+          </div>
+          <div>
             <label for="thread-id">Thread ID</label>
             <input id="thread-id" type="text" placeholder="Auto-generated on first message" />
           </div>
@@ -169,6 +173,7 @@
       const messageInput = document.getElementById("message-input");
       const modelInput = document.getElementById("model-name");
       const domainInput = document.getElementById("domain-filter");
+      const reportInput = document.getElementById("report-filter");
       const threadInput = document.getElementById("thread-id");
       const messagesContainer = document.getElementById("messages");
       const citationsContainer = document.getElementById("citations");
@@ -213,11 +218,13 @@
         }
 
         const domain = domainInput.value.trim();
+        const report = reportInput.value.trim();
         const payload = {
           message,
           thread_id: threadInput.value.trim() || null,
           model_name: modelInput.value,
           domains: domain ? [domain] : null,
+          doc_names: report ? [report] : null,
         };
 
         appendMessage("user", message);

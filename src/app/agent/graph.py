@@ -26,6 +26,7 @@ class AgentRuntimeContext:
     """Per-request runtime context passed into the deep agent."""
 
     selected_domains: tuple[str, ...]
+    selected_doc_names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ class DeepAgentChatService:
         thread_id: str | None,
         model_name: str | None,
         domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
     ) -> ChatResult:
         """Execute one chat turn through the configured deep agent."""
 
@@ -101,6 +103,7 @@ class DeepAgentChatService:
             model_name or self._settings.default_model
         )
         normalized_domains = validate_requested_domains(domains)
+        normalized_doc_names = _normalize_doc_names(doc_names)
         resolved_thread_id = thread_id or uuid.uuid4().hex
         graph = self._get_graph(normalized_model_name)
         agent_input: dict[str, object] = {
@@ -112,7 +115,10 @@ class DeepAgentChatService:
         result = graph.invoke(
             agent_input,
             config={"configurable": {"thread_id": resolved_thread_id}},
-            context=AgentRuntimeContext(selected_domains=normalized_domains),
+            context=AgentRuntimeContext(
+                selected_domains=normalized_domains,
+                selected_doc_names=normalized_doc_names,
+            ),
         )
         return ChatResult(
             thread_id=resolved_thread_id,
@@ -293,3 +299,9 @@ def _message_content(message: object) -> str:
                     text_parts.append(text_value)
         return "\n".join(part for part in text_parts if part)
     return ""
+
+
+def _normalize_doc_names(doc_names: Sequence[str] | None) -> tuple[str, ...]:
+    if doc_names is None:
+        return ()
+    return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))

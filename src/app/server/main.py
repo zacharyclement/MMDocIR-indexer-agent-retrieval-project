@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.agent.config import AppSettings
-from app.agent.graph import DeepAgentChatService, build_chat_service
+from app.agent.graph import ChatResult, DeepAgentChatService, RetrievalCitation, build_chat_service
 from indexer.shared.errors import (
     DependencyUnavailableError,
     IndexerError,
@@ -28,6 +28,7 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     model_name: str | None = None
     domains: list[str] | None = None
+    doc_names: list[str] | None = None
 
 
 class CitationResponse(BaseModel):
@@ -56,6 +57,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     """Create the FastAPI application for the retrieval chat POC."""
 
     resolved_settings = settings or AppSettings()
+    resolved_settings.apply_runtime_environment()
     configure_logging(resolved_settings.log_level)
 
     app = FastAPI(title="Retrieval Chat POC")
@@ -76,6 +78,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 thread_id=payload.thread_id,
                 model_name=payload.model_name,
                 domains=payload.domains,
+                doc_names=payload.doc_names,
             )
         except InputValidationError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error

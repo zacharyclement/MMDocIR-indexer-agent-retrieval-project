@@ -38,6 +38,7 @@ def test_build_retrieval_content_includes_top_five_page_images(tmp_path: Path) -
     response = RetrievalResponse(
         query="show me the chart",
         domains=("Guidebook",),
+        doc_names=("doc.pdf",),
         results=results,
     )
 
@@ -56,6 +57,7 @@ def test_build_retrieval_artifact_preserves_all_ranked_results(tmp_path: Path) -
     response = RetrievalResponse(
         query="show me the chart",
         domains=("Guidebook",),
+        doc_names=("doc.pdf",),
         results=[
             RankedPageResult(
                 doc_name="doc.pdf",
@@ -75,4 +77,5 @@ def test_build_retrieval_artifact_preserves_all_ranked_results(tmp_path: Path) -
 
     assert artifact["query"] == "show me the chart"
     assert artifact["domains"] == ["Guidebook"]
+    assert artifact["doc_names"] == ["doc.pdf"]
     assert artifact["results"][0]["page_image_path"] == str(image_path)

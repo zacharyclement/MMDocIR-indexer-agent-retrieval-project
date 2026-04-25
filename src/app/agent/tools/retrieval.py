@@ -51,6 +51,10 @@ def build_retrieval_tool(
             list[str] | None,
             "Optional list of domain filters. Use only configured domain names.",
         ] = None,
+        doc_names: Annotated[
+            list[str] | None,
+            "Optional exact document filename filters. Use indexed doc_name values.",
+        ] = None,
         limit: Annotated[
             int | None,
             "Maximum number of final ranked pages to return.",
@@ -65,17 +69,24 @@ def build_retrieval_tool(
             query: Natural-language retrieval query.
             domains: Optional domain filters. Use only values from the configured
                 domain catalog.
+            doc_names: Optional exact document filename filters. Use indexed
+                `doc_name` values.
             limit: Maximum number of ranked pages to return.
         """
 
         runtime_domains = list(runtime.context.selected_domains)
+        runtime_doc_names = _normalize_doc_names(list(runtime.context.selected_doc_names))
         requested_domains = domains if domains is not None else runtime_domains
         normalized_domains = validate_requested_domains(requested_domains)
+        normalized_doc_names = (
+            runtime_doc_names if runtime_doc_names else _normalize_doc_names(doc_names)
+        )
         final_limit = limit or rerank_limit
         query_embeddings = search_service.encode_query(query)
         candidates = search_service.search_candidates(
             query_embeddings=query_embeddings,
             domains=normalized_domains,
+            doc_names=normalized_doc_names,
             limit=max(final_limit, query_limit),
         )
         ranked_results = rerank_candidates(
@@ -87,6 +98,7 @@ def build_retrieval_tool(
         response = RetrievalResponse(
             query=query,
             domains=normalized_domains,
+            doc_names=normalized_doc_names,
             results=ranked_results,
         )
         return (
@@ -186,5 +198,12 @@ def _build_retrieval_artifact(response: RetrievalResponse) -> dict[str, Any]:
     return {
         "query": response.query,
         "domains": list(response.domains),
+        "doc_names": list(response.doc_names),
         "results": [asdict(result) for result in response.results],
     }
+
+
+def _normalize_doc_names(doc_names: list[str] | None) -> tuple[str, ...]:
+    if doc_names is None:
+        return ()
+    return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))

@@ -55,6 +55,7 @@ class RetrievalResponse:
 
     query: str
     domains: tuple[str, ...]
+    doc_names: tuple[str, ...]
     results: list[RankedPageResult]
 
 
@@ -85,11 +86,12 @@ class QdrantPageSearchService:
         self,
         query_embeddings: list[list[float]],
         domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
         limit: int,
     ) -> list[RetrievedPageCandidate]:
         """Retrieve coarse page candidates from Qdrant."""
 
-        query_filter = self._build_domain_filter(domains)
+        query_filter = self._build_query_filter(domains, doc_names)
         try:
             response = self._client.query_points(
                 collection_name=self._collection_name,
@@ -155,18 +157,30 @@ class QdrantPageSearchService:
         return candidates
 
     @staticmethod
-    def _build_domain_filter(domains: Sequence[str] | None) -> Any | None:
+    def _build_query_filter(
+        domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
+    ) -> Any | None:
         normalized_domains = validate_requested_domains(domains)
-        if not normalized_domains:
-            return None
-        return models.Filter(
-            must=[
+        normalized_doc_names = _normalize_doc_names(doc_names)
+        must_conditions: list[Any] = []
+        if normalized_domains:
+            must_conditions.append(
                 models.FieldCondition(
                     key="domain",
                     match=models.MatchAny(any=list(normalized_domains)),
                 )
-            ]
-        )
+            )
+        if normalized_doc_names:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="doc_name",
+                    match=models.MatchAny(any=list(normalized_doc_names)),
+                )
+            )
+        if not must_conditions:
+            return None
+        return models.Filter(must=must_conditions)
 
 
 def _require_non_empty_string(value: object, field_name: str) -> str:
@@ -221,3 +235,9 @@ def _to_float(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise IndexingRuntimeError("Vector entries must be numeric.")
     return float(value)
+
+
+def _normalize_doc_names(doc_names: Sequence[str] | None) -> tuple[str, ...]:
+    if doc_names is None:
+        return ()
+    return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))

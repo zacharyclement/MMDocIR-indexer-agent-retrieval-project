@@ -7,3 +7,4 @@ milvus_poc.db
 artifacts/
 milvus_poc_*.db
 qdrant_data/
+.env

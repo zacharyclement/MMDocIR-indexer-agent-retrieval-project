@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.agent.llms import DEFAULT_MODEL_NAME, normalize_model_name
@@ -17,7 +18,11 @@ APP_SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
 class AppSettings(BaseSettings):
     """Runtime settings for the retrieval chat application."""
 
-    model_config = SettingsConfigDict(env_prefix="APP_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=8000)
@@ -32,7 +37,20 @@ class AppSettings(BaseSettings):
     retrieval_image_limit: int = Field(default=5, ge=1)
     static_dir: Path = Field(default=APP_STATIC_DIR)
     skills_dir: Path = Field(default=APP_SKILLS_DIR)
-    langsmith_project: str = Field(default="unstructured-tests-retrieval-poc")
+    langsmith_tracing: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "APP_LANGSMITH_TRACING",
+            "LANGSMITH_TRACING",
+        ),
+    )
+    langsmith_project: str = Field(
+        default="unstructured-tests-retrieval-poc",
+        validation_alias=AliasChoices(
+            "APP_LANGSMITH_PROJECT",
+            "LANGSMITH_PROJECT",
+        ),
+    )
 
     @field_validator("default_model")
     @classmethod
@@ -40,3 +58,9 @@ class AppSettings(BaseSettings):
         """Validate the configured default chat model."""
 
         return normalize_model_name(value)
+
+    def apply_runtime_environment(self) -> None:
+        """Project resolved settings into environment variables used by libraries."""
+
+        os.environ["LANGSMITH_TRACING"] = str(self.langsmith_tracing).lower()
+        os.environ["LANGSMITH_PROJECT"] = self.langsmith_project

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.agent.config import AppSettings
@@ -19,10 +21,12 @@ class _FakeAgentService:
         thread_id: str | None,
         model_name: str | None,
         domains: list[str] | None,
+        doc_names: list[str] | None,
     ) -> ChatResult:
         assert message == "hello"
         assert model_name == "anthropic:claude-sonnet-4-6"
         assert domains == ["Guidebook"]
+        assert doc_names == ["watch_d.pdf"]
         return ChatResult(
             thread_id=thread_id or "generated-thread",
             model_name=model_name or "anthropic:claude-sonnet-4-6",
@@ -54,6 +58,7 @@ def test_chat_endpoint_returns_serialized_agent_response() -> None:
             "thread_id": "thread-123",
             "model_name": "anthropic:claude-sonnet-4-6",
             "domains": ["Guidebook"],
+            "doc_names": ["watch_d.pdf"],
         },
     )
 
@@ -66,3 +71,32 @@ def test_chat_endpoint_returns_serialized_agent_response() -> None:
         payload["citations"][0]["page_image_path"]
         == "artifacts/page_images/watch/0.png"
     )
+
+
+def test_create_app_applies_langsmith_settings_to_runtime_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+
+    create_app(
+        AppSettings(
+            langsmith_project="custom-project",
+            langsmith_tracing=False,
+        )
+    )
+
+    assert os.environ["LANGSMITH_PROJECT"] == "custom-project"
+    assert os.environ["LANGSMITH_TRACING"] == "false"
+
+
+def test_app_settings_accept_legacy_langsmith_environment_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGSMITH_PROJECT", "legacy-project")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+
+    settings = AppSettings()
+
+    assert settings.langsmith_project == "legacy-project"
+    assert settings.langsmith_tracing is False
