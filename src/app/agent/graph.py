@@ -28,12 +28,21 @@ from app.agent.retrieval.qdrant_search import (
 )
 from app.agent.retrieval.rerank import rerank_candidates
 from app.agent.tools.retrieval import build_retrieval_tool
-from indexer.shared.errors import DependencyUnavailableError, InputValidationError
+from deepagents import create_deep_agent
+from deepagents.backends.utils import create_file_data
+from langgraph.checkpoint.memory import MemorySaver
+
+from indexer.shared.errors import InputValidationError
 
 
 @dataclass(frozen=True)
 class AgentRuntimeContext:
-    """Per-request runtime context passed into the deep agent."""
+    """Per-request runtime context passed into the deep agent.
+
+    The context carries retrieval filters selected outside the model so the
+    retrieval tool can enforce them consistently across every tool call in the
+    turn.
+    """
 
     selected_domains: tuple[str, ...]
     selected_doc_names: tuple[str, ...]
@@ -56,7 +65,12 @@ class ChatResult:
 
 @dataclass(frozen=True)
 class RetrievalPreview:
-    """Represents one direct retrieval execution for evaluation purposes."""
+    """Represents one direct retrieval execution for evaluation purposes.
+
+    This structure keeps both coarse candidates and final reranked results so
+    evaluation code can compute deterministic retrieval metrics without having
+    to reconstruct intermediate search state from agent traces.
+    """
 
     query: str
     domains: tuple[str, ...]
@@ -244,14 +258,6 @@ class DeepAgentChatService:
         return graph
 
     def _build_graph(self, model_name: str) -> Any:
-        try:
-            from deepagents import create_deep_agent
-        except ImportError as error:  # pragma: no cover - optional dependency.
-            raise DependencyUnavailableError(
-                "deepagents is required to build the retrieval chat graph. "
-                "Install the app dependencies first."
-            ) from error
-
         skills = ["/skills/"] if self._skill_files else None
         return create_deep_agent(
             model=build_chat_model(model_name),
@@ -264,14 +270,6 @@ class DeepAgentChatService:
 
     @staticmethod
     def _build_checkpointer() -> Any:
-        try:
-            from langgraph.checkpoint.memory import MemorySaver
-        except ImportError as error:  # pragma: no cover - optional dependency.
-            raise DependencyUnavailableError(
-                "langgraph is required to enable threaded in-memory chat history. "
-                "Install the app dependencies first."
-            ) from error
-
         return MemorySaver()
 
 
@@ -288,18 +286,15 @@ def build_chat_service(
 
 
 def _load_skill_files(skills_dir: Path) -> dict[str, object]:
-    """Load project skill files into the deep agent state backend input format."""
+    """Load project skill files into the deep-agent virtual file format.
+
+    Deep Agents expects skill content as in-memory file objects keyed by a
+    virtual path. This helper mirrors the on-disk skills tree beneath
+    `/skills/` so the agent can reference those files predictably.
+    """
 
     if not skills_dir.exists():
         return {}
-
-    try:
-        from deepagents.backends.utils import create_file_data
-    except ImportError as error:  # pragma: no cover - optional dependency.
-        raise DependencyUnavailableError(
-            "deepagents is required to load project skill files. "
-            "Install the app dependencies first."
-        ) from error
 
     skill_files: dict[str, object] = {}
     for file_path in sorted(path for path in skills_dir.rglob("*") if path.is_file()):
@@ -312,6 +307,8 @@ def _load_skill_files(skills_dir: Path) -> dict[str, object]:
 
 
 def _normalize_doc_names(doc_names: Sequence[str] | None) -> tuple[str, ...]:
+    """Normalize exact document-name filters into a sorted unique tuple."""
+
     if doc_names is None:
         return ()
     return tuple(

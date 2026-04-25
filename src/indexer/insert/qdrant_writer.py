@@ -5,15 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import Iterable
 
-from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
-from indexer.shared.models import PageInsertPoint
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
 
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.http import models
-except ImportError:  # pragma: no cover - exercised in runtime environments without qdrant-client.
-    QdrantClient = None
-    models = None
+from indexer.shared.errors import IndexingRuntimeError
+from indexer.shared.models import PageInsertPoint
 
 
 def _build_point_id(page_uid: str) -> uuid.UUID:
@@ -24,11 +20,6 @@ class QdrantInsertWriter:
     """Handles local Qdrant connectivity and page-batch upsert operations."""
 
     def __init__(self, db_path: str, collection_name: str) -> None:
-        if QdrantClient is None or models is None:
-            raise DependencyUnavailableError(
-                "qdrant-client is required for Qdrant write operations."
-            )
-
         self._collection_name = collection_name
         self._client = QdrantClient(path=db_path)
 

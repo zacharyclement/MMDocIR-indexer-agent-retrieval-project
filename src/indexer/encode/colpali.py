@@ -1,20 +1,32 @@
-"""ColPali encoder wrapper for the indexing pipeline."""
+"""ColPali-family encoder wrapper for the indexing and retrieval pipeline.
+
+This module hides model-family differences between older ColPali checkpoints
+and newer ColQwen variants so the rest of the repository can work with one
+encoder interface for page encoding, query encoding, and late-interaction
+scoring.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from PIL import Image
+import torch
+from colpali_engine.models import (
+    ColPali,
+    ColPaliProcessor,
+    ColQwen2,
+    ColQwen2_5,
+    ColQwen2_5_Processor,
+    ColQwen2Processor,
+)
 
-from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
-
-try:
-    import torch
-except ImportError:  # pragma: no cover - exercised in environments without torch.
-    torch = None
+from indexer.shared.errors import IndexingRuntimeError
 
 
 def _build_model_load_kwargs(device: str, torch_dtype: Any) -> dict[str, Any]:
+    """Build keyword arguments for loading a model on the requested device."""
+
     load_kwargs: dict[str, Any] = {"torch_dtype": torch_dtype}
     if device != "cpu":
         load_kwargs["device_map"] = device
@@ -22,10 +34,8 @@ def _build_model_load_kwargs(device: str, torch_dtype: Any) -> dict[str, Any]:
 
 
 def _resolve_torch_dtype(device: str) -> Any:
-    if torch is None:
-        raise DependencyUnavailableError(
-            "torch is required for ColPali encoding. Install 'torch'."
-        )
+    """Choose a practical inference dtype for the resolved execution device."""
+
     if device == "cuda" and hasattr(torch, "bfloat16"):
         return torch.bfloat16
     if device == "mps":
@@ -34,6 +44,8 @@ def _resolve_torch_dtype(device: str) -> Any:
 
 
 def _move_inputs_to_device(inputs: Any, device: str) -> Any:
+    """Move processor output tensors onto the target inference device."""
+
     if hasattr(inputs, "to"):
         return inputs.to(device)
     return {
@@ -43,6 +55,8 @@ def _move_inputs_to_device(inputs: Any, device: str) -> Any:
 
 
 def _infer_embedding_dimension(model: Any) -> int:
+    """Infer the embedding dimension exposed by a loaded late-interaction model."""
+
     dim = getattr(model, "dim", None)
     if isinstance(dim, int):
         return dim
@@ -56,19 +70,7 @@ def _infer_embedding_dimension(model: Any) -> int:
 
 
 def _load_model_classes(model_name: str) -> tuple[Any, Any]:
-    try:
-        from colpali_engine.models import (
-            ColPali,
-            ColPaliProcessor,
-            ColQwen2,
-            ColQwen2_5,
-            ColQwen2_5_Processor,
-            ColQwen2Processor,
-        )
-    except ImportError as error:  # pragma: no cover - external dependency.
-        raise DependencyUnavailableError(
-            "colpali-engine is required for ColPali encoding."
-        ) from error
+    """Select the model and processor classes for a configured checkpoint name."""
 
     normalized_model_name = model_name.lower()
     if "colqwen2.5" in normalized_model_name or "colqwen2_5" in normalized_model_name:
@@ -79,26 +81,30 @@ def _load_model_classes(model_name: str) -> tuple[Any, Any]:
 
 
 def _prepare_inputs(processor: Any, image: Image.Image) -> Any:
+    """Prepare page-image inputs across supported processor API variants."""
+
     if hasattr(processor, "process_images"):
         return processor.process_images([image])
     return processor(images=image, return_tensors="pt")
 
 
 def _prepare_query_inputs(processor: Any, query_text: str) -> Any:
+    """Prepare text-query inputs across supported processor API variants."""
+
     if hasattr(processor, "process_queries"):
         return processor.process_queries([query_text])
     return processor(text=query_text, return_tensors="pt")
 
 
 class ColPaliPageEncoder:
-    """Encodes rendered pages into ColPali patch embeddings."""
+    """Encode pages and queries with a ColPali-family late-interaction model.
+
+    The class presents a stable repository interface over the underlying model
+    family so both indexing and retrieval code can request embeddings and
+    MaxSim-style scores without branching on checkpoint-specific APIs.
+    """
 
     def __init__(self, model_name: str, device: str) -> None:
-        if torch is None:
-            raise DependencyUnavailableError(
-                "torch is required for ColPali encoding. Install 'torch'."
-            )
-
         self._device = device
         model_class, processor_class = _load_model_classes(model_name)
         self._processor = processor_class.from_pretrained(model_name)
@@ -172,6 +178,8 @@ class ColPaliPageEncoder:
 
     @staticmethod
     def _extract_page_tensor(outputs: Any) -> Any:
+        """Extract a two-dimensional embedding tensor from model outputs."""
+
         if hasattr(outputs, "embeddings"):
             tensor = outputs.embeddings
         elif hasattr(outputs, "last_hidden_state"):

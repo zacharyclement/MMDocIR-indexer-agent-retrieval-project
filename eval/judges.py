@@ -1,9 +1,22 @@
-"""Judge helpers for answer and context evaluation."""
+"""Judge helpers for answer-quality evaluation.
+
+This module wraps the OpenEvals prebuilt evaluators used by the repository's
+evaluation workflow. It translates application-level question records into the
+argument shapes expected by those evaluators and normalizes the results into
+the repository's persisted evaluation schema.
+"""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+
+from openevals.llm import create_llm_as_judge
+from openevals.prompts import (
+    CORRECTNESS_PROMPT,
+    RAG_GROUNDEDNESS_PROMPT,
+    RAG_HELPFULNESS_PROMPT,
+)
 
 from app.agent.llms import DEFAULT_MODEL_NAME, normalize_model_name
 from eval.schemas import AnswerEvaluationRecord, EvaluatorFeedbackRecord
@@ -19,7 +32,7 @@ DEFAULT_EVALUATOR_SPECS = (
 
 @dataclass(frozen=True)
 class JudgeInput:
-    """Represents one judge invocation payload."""
+    """Represents one judge invocation payload for a single question."""
 
     question: str
     expected_answer: str
@@ -28,17 +41,11 @@ class JudgeInput:
 
 
 class AnswerJudge:
-    """Evaluates answer quality with prebuilt OpenEvals evaluators."""
+    """Evaluate answer quality with the configured OpenEvals evaluators."""
 
     def __init__(self, model_name: str = DEFAULT_JUDGE_MODEL_NAME) -> None:
         self._model_name = normalize_model_name(model_name)
-        try:
-            self._evaluators = _build_answer_evaluators(self._model_name)
-        except ImportError as error:
-            raise IndexingRuntimeError(
-                "OpenEvals scoring requires the optional evaluation dependencies to be "
-                "installed in the active environment."
-            ) from error
+        self._evaluators = _build_answer_evaluators(self._model_name)
 
     @property
     def model_name(self) -> str:
@@ -47,7 +54,7 @@ class AnswerJudge:
         return self._model_name
 
     def score(self, judge_input: JudgeInput) -> AnswerEvaluationRecord:
-        """Score one evaluated question."""
+        """Score one evaluated question and return normalized evaluator output."""
 
         try:
             return AnswerEvaluationRecord(
@@ -60,11 +67,6 @@ class AnswerJudge:
                     for evaluator_key, evaluator in self._evaluators.items()
                 ]
             )
-        except ImportError as error:
-            raise IndexingRuntimeError(
-                "OpenEvals scoring requires the optional evaluation dependencies to be "
-                "installed in the active environment."
-            ) from error
         except Exception as error:
             raise IndexingRuntimeError(
                 "Failed to score evaluation example with OpenEvals using judge model "
@@ -73,12 +75,7 @@ class AnswerJudge:
 
 
 def _build_answer_evaluators(model_name: str) -> dict[str, object]:
-    from openevals.llm import create_llm_as_judge
-    from openevals.prompts import (
-        CORRECTNESS_PROMPT,
-        RAG_GROUNDEDNESS_PROMPT,
-        RAG_HELPFULNESS_PROMPT,
-    )
+    """Construct the repository's configured evaluator set for one judge model."""
 
     prompt_by_name = {
         "CORRECTNESS_PROMPT": CORRECTNESS_PROMPT,
@@ -100,6 +97,8 @@ def _run_answer_evaluator(
     evaluator: object,
     judge_input: JudgeInput,
 ) -> EvaluatorFeedbackRecord:
+    """Run one evaluator and normalize its result into persisted feedback."""
+
     if not callable(evaluator):
         raise IndexingRuntimeError(
             f"Evaluator '{evaluator_key}' is not callable."
@@ -129,6 +128,8 @@ def _run_answer_evaluator(
 
 
 def _normalize_score(value: object) -> bool | float | None:
+    """Normalize heterogeneous evaluator scores into the stored score union."""
+
     if value is None:
         return None
     if isinstance(value, bool):
@@ -139,6 +140,8 @@ def _normalize_score(value: object) -> bool | float | None:
 
 
 def _normalize_comment(value: object) -> str | None:
+    """Normalize an evaluator comment into a trimmed optional string."""
+
     if value is None:
         return None
     if isinstance(value, str):

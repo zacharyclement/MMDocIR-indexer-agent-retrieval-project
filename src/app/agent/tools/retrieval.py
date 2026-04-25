@@ -8,14 +8,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
 from app.agent.retrieval.domain_catalog import validate_requested_domains
-from app.agent.retrieval.qdrant_search import RetrievalResponse
+from app.agent.retrieval.qdrant_search import QdrantPageSearchService, RetrievalResponse
 from app.agent.retrieval.rerank import rerank_candidates
 from indexer.encode.colpali import ColPaliPageEncoder
-from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
+from langchain.tools import ToolRuntime, tool
 
+from indexer.shared.errors import IndexingRuntimeError
+
+# Avoid a runtime circular import with app.agent.graph while preserving type checking.
 if TYPE_CHECKING:
     from app.agent.graph import AgentRuntimeContext
-    from app.agent.retrieval.qdrant_search import QdrantPageSearchService
+else:
+    AgentRuntimeContext = Any
 
 
 def build_retrieval_tool(
@@ -25,20 +29,15 @@ def build_retrieval_tool(
     rerank_limit: int,
     image_limit: int,
 ):
-    """Build the retrieval tool bound to the configured search service."""
+    """Build the agent-facing retrieval tool for page search.
 
-    try:
-        from langchain.tools import ToolRuntime, tool
-    except ImportError as error:  # pragma: no cover - optional dependency.
-        raise DependencyUnavailableError(
-            "langchain is required to construct the retrieval tool. "
-            "Install the app dependencies first."
-        ) from error
-
-    from app.agent.graph import AgentRuntimeContext
-
-    globals()["ToolRuntime"] = ToolRuntime
-    globals()["AgentRuntimeContext"] = AgentRuntimeContext
+    The returned tool performs three steps for each invocation: encode the
+    text query, fetch coarse page candidates from Qdrant, and rerank those
+    candidates in Python with the shared late-interaction encoder. It also
+    applies request-scoped domain and exact document-name filters carried in
+    the runtime context so UI-selected filters remain enforced even if the
+    model omits them on a follow-up tool call.
+    """
 
     @tool(parse_docstring=True, response_format="content_and_artifact")
     def retrieve_pages(
@@ -113,6 +112,14 @@ def _build_retrieval_content(
     response: RetrievalResponse,
     image_limit: int,
 ) -> list[dict[str, object]]:
+    """Build multimodal tool content blocks for the deep-agent response.
+
+    The first block always contains a text summary of the ranked results.
+    Additional image blocks are appended only for the top `image_limit` pages
+    so the agent can ground its answer in page renders without flooding the
+    context window with every retrieved image.
+    """
+
     content: list[dict[str, object]] = [
         {
             "type": "text",
@@ -142,6 +149,8 @@ def _build_retrieval_summary_text(
     response: RetrievalResponse,
     image_limit: int,
 ) -> str:
+    """Summarize ranked retrieval results in a model-readable text block."""
+
     if not response.results:
         return (
             "Retrieval returned no matching pages. "
@@ -169,6 +178,8 @@ def _build_retrieval_summary_text(
 
 
 def _build_image_content_block(image_path: Path) -> dict[str, object]:
+    """Encode one persisted page image as an inline `image_url` content block."""
+
     if not image_path.is_file():
         raise IndexingRuntimeError(
             f"Retrieved page image artifact does not exist: {image_path}"
@@ -184,6 +195,8 @@ def _build_image_content_block(image_path: Path) -> dict[str, object]:
 
 
 def _infer_mime_type(image_path: Path) -> str:
+    """Infer the MIME type for a retrieved page image artifact."""
+
     suffix = image_path.suffix.lower()
     if suffix == ".png":
         return "image/png"
@@ -195,6 +208,13 @@ def _infer_mime_type(image_path: Path) -> str:
 
 
 def _build_retrieval_artifact(response: RetrievalResponse) -> dict[str, Any]:
+    """Build the structured tool artifact persisted in the agent trace.
+
+    This artifact intentionally mirrors the ranked retrieval payload in a
+    JSON-serializable shape so evaluation, debugging, and citation extraction
+    can inspect tool usage without reparsing model-facing content blocks.
+    """
+
     return {
         "query": response.query,
         "domains": list(response.domains),
@@ -204,6 +224,8 @@ def _build_retrieval_artifact(response: RetrievalResponse) -> dict[str, Any]:
 
 
 def _normalize_doc_names(doc_names: list[str] | None) -> tuple[str, ...]:
+    """Normalize exact document-name filters into a deduplicated tuple."""
+
     if doc_names is None:
         return ()
     return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))

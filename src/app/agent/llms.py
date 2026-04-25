@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from indexer.shared.errors import DependencyUnavailableError
+from langchain.chat_models import init_chat_model
+
 from indexer.shared.errors import InputValidationError
 
 DEFAULT_MODEL_NAME = "anthropic:claude-sonnet-4-6"
@@ -41,12 +42,5 @@ def normalize_model_name(model_name: str | None) -> str:
 
 def build_chat_model(model_name: str):
     """Build a LangChain chat model instance for the selected provider model."""
-
-    try:
-        from langchain.chat_models import init_chat_model
-    except ImportError as error:  # pragma: no cover - depends on optional runtime dependency.
-        raise DependencyUnavailableError(
-            "langchain is required to build the chat model. Install the app dependencies first."
-        ) from error
 
     return init_chat_model(model=normalize_model_name(model_name))

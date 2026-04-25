@@ -6,15 +6,11 @@ import io
 from collections.abc import Iterator
 from pathlib import Path
 
+import fitz
 from PIL import Image
 
-from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
+from indexer.shared.errors import IndexingRuntimeError
 from indexer.shared.models import RenderedPage
-
-try:
-    import fitz
-except ImportError:  # pragma: no cover - depends on optional runtime dependency.
-    fitz = None
 
 
 class PdfPageRenderer:
@@ -25,11 +21,6 @@ class PdfPageRenderer:
 
     def render(self, pdf_path: Path) -> Iterator[RenderedPage]:
         """Yield rendered pages for the given PDF path."""
-
-        if fitz is None:
-            raise DependencyUnavailableError(
-                "PyMuPDF is required for PDF rendering. Install 'pymupdf'."
-            )
 
         try:
             with fitz.open(pdf_path) as document:

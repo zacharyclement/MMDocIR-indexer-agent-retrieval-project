@@ -7,31 +7,32 @@ import json
 import sys
 import uuid
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
+from indexer.encode.colpali import ColPaliPageEncoder
 from indexer.flatten.page_patches import build_page_point
 from indexer.index_report import IndexReportWriter
+from indexer.insert.qdrant_writer import QdrantInsertWriter
 from indexer.load_docs.domain_mapping import load_domain_mapping
 from indexer.load_docs.targets import resolve_target_documents
-from indexer.render.pdf_pages import save_rendered_page_image
+from indexer.render.pdf_pages import PdfPageRenderer, save_rendered_page_image
 from indexer.shared.config import Settings
 from indexer.shared.errors import IndexerError, InputValidationError
 from indexer.shared.logging_utils import configure_logging, get_logger, log_event
-from indexer.shared.models import TargetDocument
+from indexer.shared.models import RenderedPage, TargetDocument
 from indexer.shared.utils import utc_now_iso
 from indexer.validate.inputs import find_mapping_gaps, validate_target_files
-
-if TYPE_CHECKING:
-    from indexer.encode.colpali import ColPaliPageEncoder
-    from indexer.insert.qdrant_writer import QdrantInsertWriter
-    from indexer.render.pdf_pages import PdfPageRenderer
-    from indexer.shared.models import RenderedPage
 
 LOGGER = get_logger(__name__)
 
 
 class IndexingService:
-    """Coordinates validation, encoding, and insertion for document indexing."""
+    """Coordinate the end-to-end document indexing workflow.
+
+    The service validates selected inputs, renders PDF pages, encodes each page
+    into late-interaction embeddings, persists page-image artifacts, writes
+    page points into Qdrant, and records per-document outcomes in the index
+    report.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -41,7 +42,7 @@ class IndexingService:
         self._writer: QdrantInsertWriter | None = None
 
     def index(self, file_name: str | None) -> int:
-        """Index one file or all files and return the inserted row count."""
+        """Index one file or all files and return the inserted point count."""
 
         mapping = load_domain_mapping()
         validate_target_files(self._settings.data_dir, mapping, file_name)
@@ -95,7 +96,7 @@ class IndexingService:
         return total_rows
 
     def validate(self, file_name: str | None) -> list[str]:
-        """Validate inputs and return the selected PDF names."""
+        """Validate inputs and return the selected PDF filenames."""
 
         mapping = load_domain_mapping()
         target_paths = validate_target_files(
@@ -106,7 +107,7 @@ class IndexingService:
         return [path.name for path in target_paths]
 
     def show_mapping_gaps(self) -> list[str]:
-        """Return PDFs present in data/ but missing from the domain mapping."""
+        """Return PDFs present in `data/` but missing from the domain mapping."""
 
         mapping = load_domain_mapping()
         return find_mapping_gaps(self._settings.data_dir, mapping)
@@ -151,15 +152,11 @@ class IndexingService:
 
     def _get_renderer(self) -> PdfPageRenderer:
         if self._renderer is None:
-            from indexer.render.pdf_pages import PdfPageRenderer
-
             self._renderer = PdfPageRenderer(zoom=self._settings.render_zoom)
         return self._renderer
 
     def _get_encoder(self) -> ColPaliPageEncoder:
         if self._encoder is None:
-            from indexer.encode.colpali import ColPaliPageEncoder
-
             self._encoder = ColPaliPageEncoder(
                 model_name=self._settings.model_name,
                 device=self._settings.resolved_device(),
@@ -168,8 +165,6 @@ class IndexingService:
 
     def _get_writer(self) -> QdrantInsertWriter:
         if self._writer is None:
-            from indexer.insert.qdrant_writer import QdrantInsertWriter
-
             self._writer = QdrantInsertWriter(
                 db_path=str(self._settings.qdrant_path),
                 collection_name=self._settings.collection_name,
@@ -181,6 +176,8 @@ class IndexingService:
         target_document: TargetDocument,
         rendered_page: RenderedPage,
     ) -> str:
+        """Persist one rendered page image and return its artifact path."""
+
         image_path = save_rendered_page_image(
             page_image_dir=self._settings.page_image_dir,
             source_sha256=target_document.source_sha256,
@@ -202,10 +199,14 @@ class IndexingService:
 
 
 def _write_stdout(payload: dict[str, object]) -> None:
+    """Write one JSON payload to standard output for CLI callers."""
+
     sys.stdout.write(json.dumps(payload) + "\n")
 
 
 def _write_stderr(payload: dict[str, object]) -> None:
+    """Write one JSON payload to standard error for CLI callers."""
+
     sys.stderr.write(json.dumps(payload) + "\n")
 
 

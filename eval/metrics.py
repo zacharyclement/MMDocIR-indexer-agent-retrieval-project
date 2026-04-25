@@ -1,4 +1,9 @@
-"""Metric helpers for evaluation outputs."""
+"""Metric helpers for persisted evaluation outputs.
+
+The public functions in this module compute deterministic retrieval metrics and
+aggregate per-question evaluation rows into document-level and corpus-level
+summary structures used by reporting.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +26,10 @@ def compute_initial_recall_at_k(
     retrieved_pages: list[int],
     k: int,
 ) -> float:
-    """Compute coarse retrieval recall at k."""
+    """Compute coarse retrieval recall at `k`.
+
+    This metric evaluates the raw Qdrant candidate set before Python reranking.
+    """
 
     relevant_pages = set(expected_pages)
     if not relevant_pages:
@@ -35,7 +43,7 @@ def compute_rerank_recall_at_k(
     reranked_pages: list[int],
     k: int,
 ) -> float:
-    """Compute reranked recall at k."""
+    """Compute reranked recall at `k` over final page ordering."""
 
     relevant_pages = set(expected_pages)
     if not relevant_pages:
@@ -49,7 +57,7 @@ def compute_hit_rate_at_k(
     reranked_pages: list[int],
     k: int,
 ) -> float:
-    """Compute hit rate at k using binary relevance."""
+    """Compute hit rate at `k` using binary page relevance."""
 
     relevant_pages = set(expected_pages)
     if not relevant_pages:
@@ -62,7 +70,7 @@ def compute_rerank_ndcg_at_k(
     reranked_pages: list[int],
     k: int,
 ) -> float:
-    """Compute rerank NDCG at k using binary page relevance."""
+    """Compute rerank NDCG at `k` using binary page relevance."""
 
     relevant_pages = set(expected_pages)
     if not relevant_pages:
@@ -110,6 +118,8 @@ def _build_document_metrics_row(
     domain: str,
     question_results: list[EvaluationQuestionResult],
 ) -> DocumentMetricsRow:
+    """Build one document-level aggregate row from question results."""
+
     return DocumentMetricsRow(
         doc_name=doc_name,
         domain=domain,
@@ -137,6 +147,8 @@ def _build_document_metrics_row(
 def _build_overall_metrics_row(
     question_results: list[EvaluationQuestionResult],
 ) -> OverallMetricsRow:
+    """Build the corpus-level aggregate row for one evaluation run."""
+
     return OverallMetricsRow(
         total_documents=len({result.doc_name for result in question_results}),
         total_questions=len(question_results),
@@ -179,6 +191,8 @@ def _build_overall_metrics_row(
 def _build_evaluator_summaries(
     question_results: list[EvaluationQuestionResult],
 ) -> list[EvaluatorSummaryRow]:
+    """Aggregate evaluator feedback rows across the supplied questions."""
+
     grouped_feedback: dict[
         tuple[str, str],
         list[EvaluatorFeedbackRecord],
@@ -217,6 +231,8 @@ def _build_evaluator_summaries(
 
 
 def _mean_nullable(values: list[float | None]) -> float | None:
+    """Return the arithmetic mean for non-null values, or `None` if empty."""
+
     numeric_values = [value for value in values if value is not None]
     if not numeric_values:
         return None
@@ -224,6 +240,8 @@ def _mean_nullable(values: list[float | None]) -> float | None:
 
 
 def _std_nullable(values: list[float | None]) -> float | None:
+    """Return the population standard deviation for non-null values."""
+
     numeric_values = [value for value in values if value is not None]
     if not numeric_values:
         return None

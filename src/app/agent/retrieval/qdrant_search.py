@@ -9,19 +9,20 @@ from typing import Any
 
 from app.agent.retrieval.domain_catalog import validate_requested_domains
 from indexer.encode.colpali import ColPaliPageEncoder
-from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
 
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.http import models
-except ImportError:  # pragma: no cover - depends on optional runtime dependency.
-    QdrantClient = None
-    models = None
+from indexer.shared.errors import IndexingRuntimeError
 
 
 @dataclass(frozen=True)
 class RetrievedPageCandidate:
-    """Represents one retrieved page candidate with stored page embeddings."""
+    """Represents one coarse retrieval hit together with stored page embeddings.
+
+    These candidates come directly from Qdrant and still include the persisted
+    page multivector so a second-stage Python reranker can score them with the
+    same late-interaction model used for query encoding.
+    """
 
     doc_name: str
     domain: str
@@ -36,7 +37,7 @@ class RetrievedPageCandidate:
 
 @dataclass(frozen=True)
 class RankedPageResult:
-    """Represents one ranked retrieval result ready for the agent response."""
+    """Represents one final reranked page result returned to the agent."""
 
     doc_name: str
     domain: str
@@ -51,7 +52,7 @@ class RankedPageResult:
 
 @dataclass(frozen=True)
 class RetrievalResponse:
-    """Represents a retrieval invocation and its ranked results."""
+    """Represents one retrieval invocation after reranking and filter application."""
 
     query: str
     domains: tuple[str, ...]
@@ -60,7 +61,13 @@ class RetrievalResponse:
 
 
 class QdrantPageSearchService:
-    """Coordinates query encoding, Qdrant retrieval, and page-level result shaping."""
+    """Coordinate coarse Qdrant retrieval for page-level search.
+
+    This service owns local Qdrant connectivity and converts raw Qdrant hits
+    into validated application objects. It does not perform final reranking;
+    callers use the returned candidates and their stored multivectors in a
+    separate Python rerank step.
+    """
 
     def __init__(
         self,
@@ -68,17 +75,12 @@ class QdrantPageSearchService:
         collection_name: str,
         encoder: ColPaliPageEncoder,
     ) -> None:
-        if QdrantClient is None or models is None:
-            raise DependencyUnavailableError(
-                "qdrant-client is required for retrieval operations."
-            )
-
         self._collection_name = collection_name
         self._client = QdrantClient(path=str(db_path))
         self._encoder = encoder
 
     def encode_query(self, query_text: str) -> list[list[float]]:
-        """Encode a user query into multivector embeddings."""
+        """Encode a user query into late-interaction multivector embeddings."""
 
         return self._encoder.encode_query(query_text)
 
@@ -89,7 +91,11 @@ class QdrantPageSearchService:
         doc_names: Sequence[str] | None,
         limit: int,
     ) -> list[RetrievedPageCandidate]:
-        """Retrieve coarse page candidates from Qdrant."""
+        """Retrieve coarse page candidates from Qdrant.
+
+        The returned candidates include both metadata payload fields and the
+        stored page multivectors needed for the in-process reranker.
+        """
 
         query_filter = self._build_query_filter(domains, doc_names)
         try:
@@ -161,6 +167,8 @@ class QdrantPageSearchService:
         domains: Sequence[str] | None,
         doc_names: Sequence[str] | None,
     ) -> Any | None:
+        """Build an optional Qdrant filter for exact domain and document-name matches."""
+
         normalized_domains = validate_requested_domains(domains)
         normalized_doc_names = _normalize_doc_names(doc_names)
         must_conditions: list[Any] = []
@@ -184,6 +192,8 @@ class QdrantPageSearchService:
 
 
 def _require_non_empty_string(value: object, field_name: str) -> str:
+    """Validate that a Qdrant payload field is a non-empty string."""
+
     if not isinstance(value, str) or not value.strip():
         raise IndexingRuntimeError(
             f"Field '{field_name}' must be a non-empty string."
@@ -192,6 +202,8 @@ def _require_non_empty_string(value: object, field_name: str) -> str:
 
 
 def _require_non_negative_int(value: object, field_name: str) -> int:
+    """Validate that a Qdrant payload field is a non-negative integer."""
+
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise IndexingRuntimeError(
             f"Field '{field_name}' must be a non-negative integer."
@@ -200,12 +212,16 @@ def _require_non_negative_int(value: object, field_name: str) -> int:
 
 
 def _require_numeric_score(value: object) -> float:
+    """Validate and normalize a numeric retrieval score from Qdrant."""
+
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise IndexingRuntimeError("Retrieval score must be numeric.")
     return float(value)
 
 
 def _extract_multivector(vector: object) -> list[list[float]]:
+    """Normalize a Qdrant vector payload into a rectangular multivector list."""
+
     if isinstance(vector, Mapping):
         if not vector:
             raise IndexingRuntimeError("Returned vector mapping was empty.")
@@ -232,12 +248,16 @@ def _extract_multivector(vector: object) -> list[list[float]]:
 
 
 def _to_float(value: object) -> float:
+    """Convert one vector element to float while rejecting invalid values."""
+
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise IndexingRuntimeError("Vector entries must be numeric.")
     return float(value)
 
 
 def _normalize_doc_names(doc_names: Sequence[str] | None) -> tuple[str, ...]:
+    """Normalize exact document-name filters into a sorted unique tuple."""
+
     if doc_names is None:
         return ()
     return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))

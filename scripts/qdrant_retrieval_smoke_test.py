@@ -10,18 +10,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from qdrant_client import QdrantClient
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from indexer.shared.config import Settings
-from indexer.shared.errors import DependencyUnavailableError, IndexerError
-
-try:
-    from qdrant_client import QdrantClient
-except ImportError:
-    QdrantClient = None
+from indexer.shared.errors import IndexerError
 
 EXPECTED_PAYLOAD_FIELDS: tuple[str, ...] = (
     "doc_name",
@@ -250,10 +247,6 @@ def build_config(args: argparse.Namespace) -> ScriptConfig:
 def build_client(qdrant_path: Path) -> Any:
     """Create a local-mode Qdrant client for the configured path."""
 
-    if QdrantClient is None:
-        raise DependencyUnavailableError(
-            "qdrant-client is required to run the retrieval smoke test."
-        )
     return QdrantClient(path=str(qdrant_path))
 
 

@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+import fitz
+
 from app.agent.agent_results_parser import RetrievalCitation, RetrievalToolCall
 from app.agent.config import AppSettings
 from app.agent.graph import DeepAgentChatService
@@ -26,16 +28,10 @@ from eval.schemas import (
     RetrievalToolCallRecord,
 )
 from indexer.shared.errors import (
-    DependencyUnavailableError,
     IndexingRuntimeError,
     InputValidationError,
 )
 from indexer.shared.logging_utils import configure_logging, get_logger, log_event
-
-try:
-    import fitz
-except ImportError:
-    fitz = None
 
 LOGGER = get_logger(__name__)
 EVAL_ROOT = Path(__file__).resolve().parent
@@ -352,10 +348,6 @@ def _extract_pdf_page_texts(
     pdf_path: Path,
     page_numbers: list[int],
 ) -> list[str]:
-    if fitz is None:
-        raise DependencyUnavailableError(
-            "PyMuPDF is required for evaluation context extraction. Install 'pymupdf'."
-        )
     if not pdf_path.is_file():
         return []
 

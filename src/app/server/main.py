@@ -27,7 +27,12 @@ LOGGER = get_logger(__name__)
 
 
 class ChatRequest(BaseModel):
-    """Represents one chat request from the HTML UI."""
+    """Represents one `/chat` request from the browser UI.
+
+    The optional `domains` and `doc_names` fields let the frontend enforce
+    runtime retrieval filters without exposing retrieval implementation
+    details in the HTTP contract.
+    """
 
     message: Annotated[str, Field(min_length=1)]
     thread_id: str | None = None
@@ -37,7 +42,12 @@ class ChatRequest(BaseModel):
 
 
 class CitationResponse(BaseModel):
-    """Represents one retrieval citation returned to the HTML UI."""
+    """Represents one retrieval citation returned to the browser.
+
+    The response includes both raw retrieval metadata and a derived
+    `page_image_url` that the UI can use to render debug previews of the
+    retrieved page artifacts.
+    """
 
     doc_name: str
     domain: str
@@ -51,7 +61,7 @@ class CitationResponse(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Represents the JSON response returned by the chat endpoint."""
+    """Represents the JSON payload returned by the `/chat` endpoint."""
 
     thread_id: str
     model_name: str
@@ -60,7 +70,12 @@ class ChatResponse(BaseModel):
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
-    """Create the FastAPI application for the retrieval chat POC."""
+    """Create the FastAPI application for the retrieval chat POC.
+
+    The application serves the static HTML client, proxies chat requests into
+    `DeepAgentChatService`, and exposes a safe file-serving route for rendered
+    page image artifacts referenced by retrieval citations.
+    """
 
     resolved_settings = settings or AppSettings()
     resolved_settings.apply_runtime_environment()
@@ -133,6 +148,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
 
 def _resolve_agent_service(app: FastAPI) -> DeepAgentChatService:
+    """Return the cached chat service or lazily construct one for the app."""
+
     cached_service = getattr(app.state, "agent_service", None)
     if cached_service is not None and hasattr(cached_service, "chat"):
         return cached_service
@@ -146,6 +163,8 @@ def _build_citation_response(
     citation: RetrievalCitation,
     settings: AppSettings,
 ) -> CitationResponse:
+    """Convert one runtime citation into the HTTP response schema."""
+
     payload = dict(citation.__dict__)
     payload["page_image_url"] = _build_page_image_url(
         page_image_path=citation.page_image_path,
@@ -155,6 +174,13 @@ def _build_citation_response(
 
 
 def _build_page_image_url(page_image_path: str, settings: AppSettings) -> str | None:
+    """Build a safe relative URL for a retrieved page image when possible.
+
+    The retrieval layer may surface absolute paths or repository-relative
+    paths. This helper resolves both forms against `page_image_root` and only
+    returns a URL when the final file is contained within that configured root.
+    """
+
     if not page_image_path.strip():
         return None
 

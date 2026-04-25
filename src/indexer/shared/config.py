@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import torch
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT.parents[1]
@@ -34,11 +35,6 @@ class Settings(BaseSettings):
 
         if self.device != "auto":
             return self.device
-
-        try:
-            import torch
-        except ImportError:
-            return "cpu"
 
         if torch.cuda.is_available():
             return "cuda"
