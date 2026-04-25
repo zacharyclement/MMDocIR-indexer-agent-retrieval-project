@@ -109,6 +109,15 @@
         padding: 12px;
       }
 
+      .citation-image {
+        display: block;
+        width: 100%;
+        margin-top: 12px;
+        border-radius: 10px;
+        border: 1px solid #dbe4f0;
+        background: #ffffff;
+      }
+
       .meta {
         color: #475569;
         font-size: 0.92rem;
@@ -199,13 +208,44 @@
         citations.forEach((citation) => {
           const node = document.createElement("div");
           node.className = "citation";
-          node.innerHTML = `
-            <strong>${citation.doc_name}</strong>
-            <div class="meta">Domain: ${citation.domain}</div>
-            <div class="meta">Page: ${citation.page_number}</div>
-            <div class="meta">File: ${citation.file_path}</div>
-            <div class="meta">Rerank score: ${citation.rerank_score.toFixed(3)}</div>
-          `;
+          const title = document.createElement("strong");
+          title.textContent = citation.doc_name;
+          node.appendChild(title);
+
+          const domain = document.createElement("div");
+          domain.className = "meta";
+          domain.textContent = `Domain: ${citation.domain}`;
+          node.appendChild(domain);
+
+          const page = document.createElement("div");
+          page.className = "meta";
+          page.textContent = `Page: ${citation.page_number}`;
+          node.appendChild(page);
+
+          const file = document.createElement("div");
+          file.className = "meta";
+          file.textContent = `File: ${citation.file_path}`;
+          node.appendChild(file);
+
+          const rerankScore = document.createElement("div");
+          rerankScore.className = "meta";
+          rerankScore.textContent = `Rerank score: ${citation.rerank_score.toFixed(3)}`;
+          node.appendChild(rerankScore);
+
+          const imagePath = document.createElement("div");
+          imagePath.className = "meta";
+          imagePath.textContent = `Image path: ${citation.page_image_path}`;
+          node.appendChild(imagePath);
+
+          if (citation.page_image_url) {
+            const image = document.createElement("img");
+            image.className = "citation-image";
+            image.src = citation.page_image_url;
+            image.alt = `${citation.doc_name} page ${citation.page_number}`;
+            image.loading = "lazy";
+            node.appendChild(image);
+          }
+
           citationsContainer.appendChild(node);
         });
       }

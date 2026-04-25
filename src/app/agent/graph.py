@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.agent.agent_results_parser import (
+    AgentResultParser,
+    ChatTraceResult,
+    RetrievalCitation,
+)
 from app.agent.config import AppSettings
 from app.agent.llms import build_chat_model, normalize_model_name
 from app.agent.prompts.system import build_system_prompt
@@ -16,7 +21,12 @@ from app.agent.retrieval.domain_catalog import (
     validate_requested_domains,
 )
 from app.agent.retrieval.encoder import build_retrieval_encoder
-from app.agent.retrieval.qdrant_search import QdrantPageSearchService
+from app.agent.retrieval.qdrant_search import (
+    QdrantPageSearchService,
+    RankedPageResult,
+    RetrievedPageCandidate,
+)
+from app.agent.retrieval.rerank import rerank_candidates
 from app.agent.tools.retrieval import build_retrieval_tool
 from indexer.shared.errors import DependencyUnavailableError, InputValidationError
 
@@ -30,22 +40,13 @@ class AgentRuntimeContext:
 
 
 @dataclass(frozen=True)
-class RetrievalCitation:
-    """Represents one retrieval citation returned to the chat UI."""
-
-    doc_name: str
-    domain: str
-    page_number: int
-    page_uid: str
-    file_path: str
-    page_image_path: str
-    coarse_score: float
-    rerank_score: float
-
-
-@dataclass(frozen=True)
 class ChatResult:
-    """Represents one completed chat turn."""
+    """Represents the minimal result shape for a completed chat turn.
+
+    This is the UI-facing response shape returned by `chat()`. It includes the
+    final answer plus the final citations, but omits intermediate retrieval-tool
+    execution details that most product callers do not need.
+    """
 
     thread_id: str
     model_name: str
@@ -53,11 +54,31 @@ class ChatResult:
     citations: list[RetrievalCitation]
 
 
-class DeepAgentChatService:
-    """Owns the retrieval toolchain and deep-agent graphs for the chat server."""
+@dataclass(frozen=True)
+class RetrievalPreview:
+    """Represents one direct retrieval execution for evaluation purposes."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    query: str
+    domains: tuple[str, ...]
+    doc_names: tuple[str, ...]
+    candidates: list[RetrievedPageCandidate]
+    results: list[RankedPageResult]
+
+
+class DeepAgentChatService:
+    """Owns the retrieval toolchain and deep-agent graphs for the chat server.
+
+    The service exposes both a minimal chat API for normal application use and
+    a trace-rich variant for evaluation and debugging workflows.
+    """
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        result_parser: AgentResultParser | None = None,
+    ) -> None:
         self._settings = settings
+        self._result_parser = result_parser or AgentResultParser()
         self._available_domains = get_available_domains()
         self._encoder = build_retrieval_encoder(
             model_name=settings.retrieval_model_name,
@@ -94,7 +115,98 @@ class DeepAgentChatService:
         domains: Sequence[str] | None,
         doc_names: Sequence[str] | None,
     ) -> ChatResult:
-        """Execute one chat turn through the configured deep agent."""
+        """Execute one chat turn and return the minimal application result.
+
+        This is the primary method for normal app flows. It intentionally hides
+        intermediate retrieval-tool trace details and returns only the final
+        answer and citations needed by the UI.
+        """
+
+        trace_result = self.chat_with_trace(
+            message=message,
+            thread_id=thread_id,
+            model_name=model_name,
+            domains=domains,
+            doc_names=doc_names,
+        )
+        return ChatResult(
+            thread_id=trace_result.thread_id,
+            model_name=trace_result.model_name,
+            answer=trace_result.answer,
+            citations=trace_result.citations,
+        )
+
+    def chat_with_trace(
+        self,
+        message: str,
+        thread_id: str | None,
+        model_name: str | None,
+        domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
+    ) -> ChatTraceResult:
+        """Execute one chat turn and return answer plus retrieval trace details.
+
+        This variant is intended for evaluation and debugging workflows that
+        need the retrieval tool calls used during generation. Those details are
+        consumed immediately for deterministic retrieval metrics and retrieved
+        context extraction, even when LangSmith tracing is also enabled.
+        """
+
+        resolved_thread_id, normalized_model_name, result = self._invoke_agent(
+            message=message,
+            thread_id=thread_id,
+            model_name=model_name,
+            domains=domains,
+            doc_names=doc_names,
+        )
+        return self._result_parser.parse_chat_trace_result(
+            result=result,
+            thread_id=resolved_thread_id,
+            model_name=normalized_model_name,
+        )
+
+    def preview_retrieval(
+        self,
+        query: str,
+        domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
+        limit: int | None = None,
+    ) -> RetrievalPreview:
+        """Run the retrieval stack directly and return coarse plus reranked outputs."""
+
+        normalized_domains = validate_requested_domains(domains)
+        normalized_doc_names = _normalize_doc_names(doc_names)
+        resolved_limit = limit or self._settings.retrieval_rerank_limit
+        query_embeddings = self._search_service.encode_query(query)
+        candidates = self._search_service.search_candidates(
+            query_embeddings=query_embeddings,
+            domains=normalized_domains,
+            doc_names=normalized_doc_names,
+            limit=max(resolved_limit, self._settings.retrieval_query_limit),
+        )
+        ranked_results = rerank_candidates(
+            encoder=self._encoder,
+            query_embeddings=query_embeddings,
+            candidates=candidates,
+            limit=resolved_limit,
+        )
+        return RetrievalPreview(
+            query=query,
+            domains=normalized_domains,
+            doc_names=normalized_doc_names,
+            candidates=candidates,
+            results=ranked_results,
+        )
+
+    def _invoke_agent(
+        self,
+        message: str,
+        thread_id: str | None,
+        model_name: str | None,
+        domains: Sequence[str] | None,
+        doc_names: Sequence[str] | None,
+    ) -> tuple[str, str, object]:
+        """Invoke the deep agent and return identifiers plus the raw result payload."""
 
         if not message.strip():
             raise InputValidationError("Message must not be blank.")
@@ -120,12 +232,7 @@ class DeepAgentChatService:
                 selected_doc_names=normalized_doc_names,
             ),
         )
-        return ChatResult(
-            thread_id=resolved_thread_id,
-            model_name=normalized_model_name,
-            answer=_extract_assistant_text(result),
-            citations=_extract_retrieval_citations(result),
-        )
+        return resolved_thread_id, normalized_model_name, result
 
     def _get_graph(self, model_name: str) -> Any:
         graph = self._graphs.get(model_name)
@@ -168,10 +275,16 @@ class DeepAgentChatService:
         return MemorySaver()
 
 
-def build_chat_service(settings: AppSettings | None = None) -> DeepAgentChatService:
+def build_chat_service(
+    settings: AppSettings | None = None,
+    result_parser: AgentResultParser | None = None,
+) -> DeepAgentChatService:
     """Build the deep-agent-backed chat service for the server."""
 
-    return DeepAgentChatService(settings or AppSettings())
+    return DeepAgentChatService(
+        settings or AppSettings(),
+        result_parser=result_parser,
+    )
 
 
 def _load_skill_files(skills_dir: Path) -> dict[str, object]:
@@ -198,110 +311,9 @@ def _load_skill_files(skills_dir: Path) -> dict[str, object]:
     return skill_files
 
 
-def _extract_assistant_text(result: object) -> str:
-    """Extract the latest assistant message text from an agent invocation result."""
-
-    messages = _extract_messages(result)
-    for message in reversed(messages):
-        if _message_type(message) != "ai":
-            continue
-        content = _message_content(message)
-        if content:
-            return content
-    raise InputValidationError("The agent did not return an assistant response.")
-
-
-def _extract_retrieval_citations(result: object) -> list[RetrievalCitation]:
-    """Extract the latest retrieval tool payload from the agent result."""
-
-    messages = _extract_messages(result)
-    for message in reversed(messages):
-        if _message_type(message) != "tool":
-            continue
-        tool_name = getattr(message, "name", None)
-        if tool_name is None and isinstance(message, Mapping):
-            mapped_name = message.get("name")
-            tool_name = mapped_name if isinstance(mapped_name, str) else None
-        if tool_name != "retrieve_pages":
-            continue
-        payload = _extract_retrieval_payload(message)
-        if payload is None:
-            return []
-        results = payload.get("results", [])
-        if not isinstance(results, list):
-            return []
-        citations: list[RetrievalCitation] = []
-        for result_item in results:
-            if not isinstance(result_item, Mapping):
-                continue
-            citations.append(
-                RetrievalCitation(
-                    doc_name=str(result_item.get("doc_name", "")),
-                    domain=str(result_item.get("domain", "")),
-                    page_number=int(result_item.get("page_number", 0)),
-                    page_uid=str(result_item.get("page_uid", "")),
-                    file_path=str(result_item.get("file_path", "")),
-                    page_image_path=str(result_item.get("page_image_path", "")),
-                    coarse_score=float(result_item.get("coarse_score", 0.0)),
-                    rerank_score=float(result_item.get("rerank_score", 0.0)),
-                )
-            )
-        return citations
-    return []
-
-
-def _extract_retrieval_payload(message: object) -> Mapping[str, object] | None:
-    artifact = getattr(message, "artifact", None)
-    if artifact is None and isinstance(message, Mapping):
-        mapped_artifact = message.get("artifact")
-        artifact = mapped_artifact if isinstance(mapped_artifact, Mapping) else None
-    if isinstance(artifact, Mapping):
-        return artifact
-    return None
-
-
-def _extract_messages(result: object) -> list[object]:
-    if isinstance(result, Mapping):
-        messages = result.get("messages", [])
-        if isinstance(messages, list):
-            return messages
-    raise InputValidationError("The agent result did not include a messages list.")
-
-
-def _message_type(message: object) -> str | None:
-    message_type = getattr(message, "type", None)
-    if isinstance(message_type, str):
-        return message_type
-    if isinstance(message, Mapping):
-        role = message.get("role")
-        if isinstance(role, str):
-            if role == "assistant":
-                return "ai"
-            return role
-    return None
-
-
-def _message_content(message: object) -> str:
-    content = getattr(message, "content", None)
-    if content is None and isinstance(message, Mapping):
-        content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                text_parts.append(item)
-                continue
-            if isinstance(item, Mapping):
-                text_value = item.get("text")
-                if isinstance(text_value, str):
-                    text_parts.append(text_value)
-        return "\n".join(part for part in text_parts if part)
-    return ""
-
-
 def _normalize_doc_names(doc_names: Sequence[str] | None) -> tuple[str, ...]:
     if doc_names is None:
         return ()
-    return tuple(sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()}))
+    return tuple(
+        sorted({doc_name.strip() for doc_name in doc_names if doc_name.strip()})
+    )

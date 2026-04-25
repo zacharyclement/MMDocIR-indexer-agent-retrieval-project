@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.agent.config import AppSettings
-from app.agent.graph import ChatResult, DeepAgentChatService, RetrievalCitation, build_chat_service
+from app.agent.graph import (
+    DeepAgentChatService,
+    RetrievalCitation,
+    build_chat_service,
+)
 from indexer.shared.errors import (
     DependencyUnavailableError,
     IndexerError,
@@ -40,6 +45,7 @@ class CitationResponse(BaseModel):
     page_uid: str
     file_path: str
     page_image_path: str
+    page_image_url: str | None = None
     coarse_score: float
     rerank_score: float
 
@@ -68,6 +74,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     def index() -> FileResponse:
         static_dir = Path(app.state.settings.static_dir)
         return FileResponse(static_dir / "index.html")
+
+    @app.get("/retrieved-images/{image_path:path}")
+    def retrieved_image(image_path: str, request: Request) -> FileResponse:
+        page_image_root = Path(request.app.state.settings.page_image_root).resolve()
+        resolved_path = (page_image_root / image_path).resolve()
+        try:
+            resolved_path.relative_to(page_image_root)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=404,
+                detail="Retrieved image not found.",
+            ) from error
+        if not resolved_path.is_file():
+            raise HTTPException(status_code=404, detail="Retrieved image not found.")
+        return FileResponse(resolved_path)
 
     @app.post("/chat", response_model=ChatResponse)
     def chat(payload: ChatRequest, request: Request) -> ChatResponse:
@@ -100,7 +121,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             model_name=chat_result.model_name,
             answer=chat_result.answer,
             citations=[
-                CitationResponse.model_validate(citation.__dict__)
+                _build_citation_response(
+                    citation=citation,
+                    settings=request.app.state.settings,
+                )
                 for citation in chat_result.citations
             ],
         )
@@ -116,6 +140,41 @@ def _resolve_agent_service(app: FastAPI) -> DeepAgentChatService:
     agent_service = build_chat_service(app.state.settings)
     app.state.agent_service = agent_service
     return agent_service
+
+
+def _build_citation_response(
+    citation: RetrievalCitation,
+    settings: AppSettings,
+) -> CitationResponse:
+    payload = dict(citation.__dict__)
+    payload["page_image_url"] = _build_page_image_url(
+        page_image_path=citation.page_image_path,
+        settings=settings,
+    )
+    return CitationResponse.model_validate(payload)
+
+
+def _build_page_image_url(page_image_path: str, settings: AppSettings) -> str | None:
+    if not page_image_path.strip():
+        return None
+
+    page_image_root = Path(settings.page_image_root).resolve()
+    raw_path = Path(page_image_path)
+    candidate_paths: list[Path] = []
+    if raw_path.is_absolute():
+        candidate_paths.append(raw_path.resolve())
+    else:
+        repo_root = page_image_root.parent.parent
+        candidate_paths.append((repo_root / raw_path).resolve())
+        candidate_paths.append((page_image_root / raw_path).resolve())
+
+    for candidate_path in candidate_paths:
+        try:
+            relative_path = candidate_path.relative_to(page_image_root)
+        except ValueError:
+            continue
+        return f"/retrieved-images/{quote(relative_path.as_posix(), safe='/')}"
+    return None
 
 
 app = create_app()

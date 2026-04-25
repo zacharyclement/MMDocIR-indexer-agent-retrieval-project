@@ -13,6 +13,7 @@ from app.agent.llms import DEFAULT_MODEL_NAME, normalize_model_name
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_STATIC_DIR = REPO_ROOT / "src" / "app" / "server" / "static"
 APP_SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
+PAGE_IMAGE_ROOT = REPO_ROOT / "artifacts" / "page_images"
 
 
 class AppSettings(BaseSettings):
@@ -21,6 +22,8 @@ class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
         extra="ignore",
+        env_file=".env",
+        env_file_encoding="utf-8",
         populate_by_name=True,
     )
 
@@ -36,7 +39,22 @@ class AppSettings(BaseSettings):
     retrieval_rerank_limit: int = Field(default=10, ge=1)
     retrieval_image_limit: int = Field(default=5, ge=1)
     static_dir: Path = Field(default=APP_STATIC_DIR)
+    page_image_root: Path = Field(default=PAGE_IMAGE_ROOT)
     skills_dir: Path = Field(default=APP_SKILLS_DIR)
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "APP_ANTHROPIC_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ),
+    )
+    langsmith_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "APP_LANGSMITH_API_KEY",
+            "LANGSMITH_API_KEY",
+        ),
+    )
     langsmith_tracing: bool = Field(
         default=True,
         validation_alias=AliasChoices(
@@ -62,5 +80,9 @@ class AppSettings(BaseSettings):
     def apply_runtime_environment(self) -> None:
         """Project resolved settings into environment variables used by libraries."""
 
+        if self.anthropic_api_key:
+            os.environ["ANTHROPIC_API_KEY"] = self.anthropic_api_key
+        if self.langsmith_api_key:
+            os.environ["LANGSMITH_API_KEY"] = self.langsmith_api_key
         os.environ["LANGSMITH_TRACING"] = str(self.langsmith_tracing).lower()
         os.environ["LANGSMITH_PROJECT"] = self.langsmith_project

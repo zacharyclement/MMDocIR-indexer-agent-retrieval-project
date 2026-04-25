@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,8 +47,13 @@ class _FakeAgentService:
         )
 
 
-def test_chat_endpoint_returns_serialized_agent_response() -> None:
-    app = create_app(AppSettings())
+def test_chat_endpoint_returns_serialized_agent_response(tmp_path: Path) -> None:
+    page_image_root = tmp_path / "artifacts" / "page_images"
+    image_path = page_image_root / "watch" / "0.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(b"fake-image")
+
+    app = create_app(AppSettings(page_image_root=page_image_root))
     app.state.agent_service = _FakeAgentService()
     client = TestClient(app)
 
@@ -71,6 +77,23 @@ def test_chat_endpoint_returns_serialized_agent_response() -> None:
         payload["citations"][0]["page_image_path"]
         == "artifacts/page_images/watch/0.png"
     )
+    assert payload["citations"][0]["page_image_url"] == "/retrieved-images/watch/0.png"
+
+    image_response = client.get(payload["citations"][0]["page_image_url"])
+
+    assert image_response.status_code == 200
+    assert image_response.content == b"fake-image"
+
+
+def test_retrieved_image_endpoint_rejects_path_traversal(tmp_path: Path) -> None:
+    page_image_root = tmp_path / "artifacts" / "page_images"
+    page_image_root.mkdir(parents=True, exist_ok=True)
+    app = create_app(AppSettings(page_image_root=page_image_root))
+    client = TestClient(app)
+
+    response = client.get("/retrieved-images/../../secret.png")
+
+    assert response.status_code == 404
 
 
 def test_create_app_applies_langsmith_settings_to_runtime_environment(
@@ -100,3 +123,29 @@ def test_app_settings_accept_legacy_langsmith_environment_variables(
 
     assert settings.langsmith_project == "legacy-project"
     assert settings.langsmith_tracing is False
+
+
+def test_app_settings_accepts_and_projects_anthropic_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    monkeypatch.delenv("APP_ANTHROPIC_API_KEY", raising=False)
+
+    settings = AppSettings()
+    settings.apply_runtime_environment()
+
+    assert settings.anthropic_api_key == "test-anthropic-key"
+    assert os.environ["ANTHROPIC_API_KEY"] == "test-anthropic-key"
+
+
+def test_app_settings_accepts_and_projects_langsmith_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-langsmith-key")
+    monkeypatch.delenv("APP_LANGSMITH_API_KEY", raising=False)
+
+    settings = AppSettings()
+    settings.apply_runtime_environment()
+
+    assert settings.langsmith_api_key == "test-langsmith-key"
+    assert os.environ["LANGSMITH_API_KEY"] == "test-langsmith-key"
