@@ -23,6 +23,7 @@ def test_build_page_point_preserves_page_metadata() -> None:
     point = build_page_point(
         target_document=target_document,
         rendered_page=rendered_page,
+        page_image_path="artifacts/page_images/abc123/0.png",
         patch_embeddings=[[0.1] * 128, [0.2] * 128],
         indexed_at="2026-04-24T00:00:00+00:00",
         run_id="run123",
@@ -30,6 +31,7 @@ def test_build_page_point_preserves_page_metadata() -> None:
 
     assert point.page_number == 0
     assert point.page_uid == "2310.05634v2.pdf::page::0"
+    assert point.page_image_path == "artifacts/page_images/abc123/0.png"
     assert point.page_width == 100
     assert point.page_height == 200
     assert point.embeddings == [[0.1] * 128, [0.2] * 128]

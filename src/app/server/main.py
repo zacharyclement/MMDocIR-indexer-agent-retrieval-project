@@ -11,7 +11,11 @@ from pydantic import BaseModel, Field
 
 from app.agent.config import AppSettings
 from app.agent.graph import DeepAgentChatService, build_chat_service
-from indexer.shared.errors import DependencyUnavailableError, IndexerError, InputValidationError
+from indexer.shared.errors import (
+    DependencyUnavailableError,
+    IndexerError,
+    InputValidationError,
+)
 from indexer.shared.logging_utils import configure_logging, get_logger, log_event
 
 LOGGER = get_logger(__name__)
@@ -34,6 +38,7 @@ class CitationResponse(BaseModel):
     page_number: int
     page_uid: str
     file_path: str
+    page_image_path: str
     coarse_score: float
     rerank_score: float
 
@@ -91,7 +96,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             thread_id=chat_result.thread_id,
             model_name=chat_result.model_name,
             answer=chat_result.answer,
-            citations=[CitationResponse.model_validate(citation.__dict__) for citation in chat_result.citations],
+            citations=[
+                CitationResponse.model_validate(citation.__dict__)
+                for citation in chat_result.citations
+            ],
         )
 
     return app

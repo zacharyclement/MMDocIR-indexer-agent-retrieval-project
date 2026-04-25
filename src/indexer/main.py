@@ -6,12 +6,14 @@ import argparse
 import json
 import sys
 import uuid
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from indexer.flatten.page_patches import build_page_point
 from indexer.index_report import IndexReportWriter
 from indexer.load_docs.domain_mapping import load_domain_mapping
 from indexer.load_docs.targets import resolve_target_documents
+from indexer.render.pdf_pages import save_rendered_page_image
 from indexer.shared.config import Settings
 from indexer.shared.errors import IndexerError, InputValidationError
 from indexer.shared.logging_utils import configure_logging, get_logger, log_event
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
     from indexer.encode.colpali import ColPaliPageEncoder
     from indexer.insert.qdrant_writer import QdrantInsertWriter
     from indexer.render.pdf_pages import PdfPageRenderer
+    from indexer.shared.models import RenderedPage
 
 LOGGER = get_logger(__name__)
 
@@ -64,7 +67,10 @@ class IndexingService:
                 domain=target_document.domain,
             )
             try:
-                page_count, inserted_rows = self._index_document(target_document, run_id)
+                page_count, inserted_rows = self._index_document(
+                    target_document,
+                    run_id,
+                )
             except Exception as error:
                 self._get_report_writer().record_failure(
                     target_document=target_document,
@@ -92,7 +98,11 @@ class IndexingService:
         """Validate inputs and return the selected PDF names."""
 
         mapping = load_domain_mapping()
-        target_paths = validate_target_files(self._settings.data_dir, mapping, file_name)
+        target_paths = validate_target_files(
+            self._settings.data_dir,
+            mapping,
+            file_name,
+        )
         return [path.name for path in target_paths]
 
     def show_mapping_gaps(self) -> list[str]:
@@ -115,10 +125,15 @@ class IndexingService:
 
         for rendered_page in renderer.render(target_document.file_path):
             page_count += 1
+            page_image_path = self._save_page_image(
+                target_document=target_document,
+                rendered_page=rendered_page,
+            )
             patch_embeddings = encoder.encode_page(rendered_page.image)
             point = build_page_point(
                 target_document=target_document,
                 rendered_page=rendered_page,
+                page_image_path=page_image_path,
                 patch_embeddings=patch_embeddings,
                 indexed_at=indexed_at,
                 run_id=run_id,
@@ -160,6 +175,25 @@ class IndexingService:
                 collection_name=self._settings.collection_name,
             )
         return self._writer
+
+    def _save_page_image(
+        self,
+        target_document: TargetDocument,
+        rendered_page: RenderedPage,
+    ) -> str:
+        image_path = save_rendered_page_image(
+            page_image_dir=self._settings.page_image_dir,
+            source_sha256=target_document.source_sha256,
+            rendered_page=rendered_page,
+        )
+        log_event(
+            LOGGER,
+            "page_image_persisted",
+            doc_name=target_document.doc_name,
+            page_number=rendered_page.page_number,
+            page_image_path=str(image_path),
+        )
+        return str(image_path)
 
     def _get_report_writer(self) -> IndexReportWriter:
         if self._report_writer is None:

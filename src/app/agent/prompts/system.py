@@ -11,10 +11,13 @@ def build_system_prompt(available_domains: Sequence[str]) -> str:
     domain_list = ", ".join(available_domains)
     return (
         "You are a retrieval-focused assistant for indexed PDF documents. "
-        "Use the retrieval tool whenever the user asks about the indexed corpus or when you need evidence before answering. "
+        "Use the retrieval tool whenever the user asks about the indexed "
+        "corpus or when you need evidence before answering. "
         "When helpful, filter retrieval to the relevant domain. "
         f"Available domains: {domain_list}. "
-        "Ground answers in retrieved pages, mention the document name and page number when citing evidence, "
+        "Ground answers in retrieved pages and any page images returned by "
+        "the retrieval tool, mention the document name and page number when "
+        "citing evidence, "
         "and say clearly when the collection does not contain enough evidence. "
         "Keep answers concise, factual, and directly responsive to the user."
     )

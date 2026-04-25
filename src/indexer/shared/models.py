@@ -47,6 +47,7 @@ class PageInsertPoint:
     page_number: int
     page_uid: str
     file_path: str
+    page_image_path: str
     embeddings: list[list[float]]
     source_sha256: str
     page_width: int

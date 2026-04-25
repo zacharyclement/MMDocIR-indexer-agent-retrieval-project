@@ -40,6 +40,7 @@ def test_qdrant_insert_writer_upserts_points(tmp_path: Path) -> None:
                 page_number=0,
                 page_uid="watch_d.pdf::page::0",
                 file_path="data/watch_d.pdf",
+                page_image_path="artifacts/page_images/abc123/0.png",
                 embeddings=[[0.1] * 128, [0.2] * 128],
                 source_sha256="abc123",
                 page_width=100,

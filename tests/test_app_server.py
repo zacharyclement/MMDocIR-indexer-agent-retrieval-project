@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
-fastapi = pytest.importorskip("fastapi")
-pytest.importorskip("httpx")
-
 from fastapi.testclient import TestClient
 
 from app.agent.config import AppSettings
@@ -39,6 +34,7 @@ class _FakeAgentService:
                     page_number=0,
                     page_uid="watch_d.pdf::page::0",
                     file_path="data/watch_d.pdf",
+                    page_image_path="artifacts/page_images/watch/0.png",
                     coarse_score=0.1,
                     rerank_score=0.2,
                 )
@@ -66,3 +62,7 @@ def test_chat_endpoint_returns_serialized_agent_response() -> None:
     assert payload["thread_id"] == "thread-123"
     assert payload["answer"] == "hi there"
     assert payload["citations"][0]["doc_name"] == "watch_d.pdf"
+    assert (
+        payload["citations"][0]["page_image_path"]
+        == "artifacts/page_images/watch/0.png"
+    )

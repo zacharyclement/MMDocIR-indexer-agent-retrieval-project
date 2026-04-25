@@ -9,6 +9,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = PACKAGE_ROOT.parents[1]
 
 
 class Settings(BaseSettings):
@@ -26,6 +27,7 @@ class Settings(BaseSettings):
     recreate_collection: bool = Field(default=False)
     log_level: str = Field(default="INFO")
     report_path: Path = Field(default=Path("artifacts/index_report.jsonl"))
+    page_image_dir: Path = Field(default=REPO_ROOT / "artifacts" / "page_images")
 
     def resolved_device(self) -> str:
         """Resolve the torch device name to use for inference."""
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
             return "mps"
         return "cpu"
 
-    def with_overrides(self, **overrides: Any) -> "Settings":
+    def with_overrides(self, **overrides: Any) -> Settings:
         """Return a copy of the settings with CLI overrides applied."""
 
         return self.model_copy(update=overrides)

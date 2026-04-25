@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.agent.retrieval.domain_catalog import validate_requested_domains
 from indexer.encode.colpali import ColPaliPageEncoder
 from indexer.shared.errors import DependencyUnavailableError, IndexingRuntimeError
-
-from app.agent.retrieval.domain_catalog import validate_requested_domains
 
 try:
     from qdrant_client import QdrantClient
@@ -29,6 +28,7 @@ class RetrievedPageCandidate:
     page_number: int
     page_uid: str
     file_path: str
+    page_image_path: str
     source_sha256: str
     coarse_score: float
     page_embeddings: list[list[float]]
@@ -43,6 +43,7 @@ class RankedPageResult:
     page_number: int
     page_uid: str
     file_path: str
+    page_image_path: str
     source_sha256: str
     coarse_score: float
     rerank_score: float
@@ -105,21 +106,44 @@ class QdrantPageSearchService:
 
         hits = getattr(response, "points", None)
         if not isinstance(hits, Sequence):
-            raise IndexingRuntimeError("Qdrant query did not return a sequence of points.")
+            raise IndexingRuntimeError(
+                "Qdrant query did not return a sequence of points."
+            )
 
         candidates: list[RetrievedPageCandidate] = []
         for hit in hits:
             payload = getattr(hit, "payload", None)
             if not isinstance(payload, Mapping):
-                raise IndexingRuntimeError("Qdrant hit did not include a payload mapping.")
+                raise IndexingRuntimeError(
+                    "Qdrant hit did not include a payload mapping."
+                )
             vector = _extract_multivector(getattr(hit, "vector", None))
             candidates.append(
                 RetrievedPageCandidate(
-                    doc_name=_require_non_empty_string(payload.get("doc_name"), "doc_name"),
-                    domain=_require_non_empty_string(payload.get("domain"), "domain"),
-                    page_number=_require_non_negative_int(payload.get("page_number"), "page_number"),
-                    page_uid=_require_non_empty_string(payload.get("page_uid"), "page_uid"),
-                    file_path=_require_non_empty_string(payload.get("file_path"), "file_path"),
+                    doc_name=_require_non_empty_string(
+                        payload.get("doc_name"),
+                        "doc_name",
+                    ),
+                    domain=_require_non_empty_string(
+                        payload.get("domain"),
+                        "domain",
+                    ),
+                    page_number=_require_non_negative_int(
+                        payload.get("page_number"),
+                        "page_number",
+                    ),
+                    page_uid=_require_non_empty_string(
+                        payload.get("page_uid"),
+                        "page_uid",
+                    ),
+                    file_path=_require_non_empty_string(
+                        payload.get("file_path"),
+                        "file_path",
+                    ),
+                    page_image_path=_require_non_empty_string(
+                        payload.get("page_image_path"),
+                        "page_image_path",
+                    ),
                     source_sha256=_require_non_empty_string(
                         payload.get("source_sha256"),
                         "source_sha256",
@@ -147,13 +171,17 @@ class QdrantPageSearchService:
 
 def _require_non_empty_string(value: object, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise IndexingRuntimeError(f"Field '{field_name}' must be a non-empty string.")
+        raise IndexingRuntimeError(
+            f"Field '{field_name}' must be a non-empty string."
+        )
     return value
 
 
 def _require_non_negative_int(value: object, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise IndexingRuntimeError(f"Field '{field_name}' must be a non-negative integer.")
+        raise IndexingRuntimeError(
+            f"Field '{field_name}' must be a non-negative integer."
+        )
     return value
 
 
@@ -171,7 +199,9 @@ def _extract_multivector(vector: object) -> list[list[float]]:
         return _extract_multivector(first_value)
 
     if not isinstance(vector, list) or not vector:
-        raise IndexingRuntimeError("Returned vector was not a non-empty multivector list.")
+        raise IndexingRuntimeError(
+            "Returned vector was not a non-empty multivector list."
+        )
 
     normalized: list[list[float]] = []
     expected_dimension: int | None = None

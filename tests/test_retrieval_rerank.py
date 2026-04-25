@@ -28,6 +28,7 @@ def test_rerank_candidates_orders_by_rerank_score() -> None:
             page_number=0,
             page_uid="alpha.pdf::page::0",
             file_path="data/alpha.pdf",
+            page_image_path="artifacts/page_images/hash-a/0.png",
             source_sha256="hash-a",
             coarse_score=0.4,
             page_embeddings=[[0.1, 0.2]],
@@ -38,6 +39,7 @@ def test_rerank_candidates_orders_by_rerank_score() -> None:
             page_number=1,
             page_uid="beta.pdf::page::1",
             file_path="data/beta.pdf",
+            page_image_path="artifacts/page_images/hash-b/1.png",
             source_sha256="hash-b",
             coarse_score=0.7,
             page_embeddings=[[0.3, 0.4]],
@@ -52,6 +54,7 @@ def test_rerank_candidates_orders_by_rerank_score() -> None:
     )
 
     assert [result.doc_name for result in ranked_results] == ["beta.pdf", "alpha.pdf"]
+    assert ranked_results[0].page_image_path == "artifacts/page_images/hash-b/1.png"
     assert ranked_results[0].rerank_score == 0.9
 
 
@@ -63,6 +66,7 @@ def test_rerank_candidates_deduplicates_by_page_uid() -> None:
             page_number=0,
             page_uid="alpha.pdf::page::0",
             file_path="data/alpha.pdf",
+            page_image_path="artifacts/page_images/hash-a/0.png",
             source_sha256="hash-a",
             coarse_score=0.4,
             page_embeddings=[[0.1, 0.2]],
@@ -73,6 +77,7 @@ def test_rerank_candidates_deduplicates_by_page_uid() -> None:
             page_number=0,
             page_uid="alpha.pdf::page::0",
             file_path="data/alpha.pdf",
+            page_image_path="artifacts/page_images/hash-a/0b.png",
             source_sha256="hash-a",
             coarse_score=0.8,
             page_embeddings=[[0.3, 0.4]],
@@ -87,4 +92,5 @@ def test_rerank_candidates_deduplicates_by_page_uid() -> None:
     )
 
     assert len(ranked_results) == 1
+    assert ranked_results[0].page_image_path == "artifacts/page_images/hash-a/0b.png"
     assert ranked_results[0].rerank_score == 0.7

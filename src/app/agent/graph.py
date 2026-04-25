@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from json import JSONDecodeError
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -13,7 +11,10 @@ from typing import Any
 from app.agent.config import AppSettings
 from app.agent.llms import build_chat_model, normalize_model_name
 from app.agent.prompts.system import build_system_prompt
-from app.agent.retrieval.domain_catalog import get_available_domains, validate_requested_domains
+from app.agent.retrieval.domain_catalog import (
+    get_available_domains,
+    validate_requested_domains,
+)
 from app.agent.retrieval.encoder import build_retrieval_encoder
 from app.agent.retrieval.qdrant_search import QdrantPageSearchService
 from app.agent.tools.retrieval import build_retrieval_tool
@@ -36,6 +37,7 @@ class RetrievalCitation:
     page_number: int
     page_uid: str
     file_path: str
+    page_image_path: str
     coarse_score: float
     rerank_score: float
 
@@ -69,7 +71,8 @@ class DeepAgentChatService:
             search_service=self._search_service,
             encoder=self._encoder,
             query_limit=settings.retrieval_query_limit,
-            score_limit=settings.retrieval_score_limit,
+            rerank_limit=settings.retrieval_rerank_limit,
+            image_limit=settings.retrieval_image_limit,
         )
         self._skill_files = _load_skill_files(settings.skills_dir)
         self._system_prompt = build_system_prompt(self._available_domains)
@@ -94,7 +97,9 @@ class DeepAgentChatService:
         if not message.strip():
             raise InputValidationError("Message must not be blank.")
 
-        normalized_model_name = normalize_model_name(model_name or self._settings.default_model)
+        normalized_model_name = normalize_model_name(
+            model_name or self._settings.default_model
+        )
         normalized_domains = validate_requested_domains(domains)
         resolved_thread_id = thread_id or uuid.uuid4().hex
         graph = self._get_graph(normalized_model_name)
@@ -128,9 +133,10 @@ class DeepAgentChatService:
     def _build_graph(self, model_name: str) -> Any:
         try:
             from deepagents import create_deep_agent
-        except ImportError as error:  # pragma: no cover - depends on optional runtime dependency.
+        except ImportError as error:  # pragma: no cover - optional dependency.
             raise DependencyUnavailableError(
-                "deepagents is required to build the retrieval chat graph. Install the app dependencies first."
+                "deepagents is required to build the retrieval chat graph. "
+                "Install the app dependencies first."
             ) from error
 
         skills = ["/skills/"] if self._skill_files else None
@@ -147,9 +153,10 @@ class DeepAgentChatService:
     def _build_checkpointer() -> Any:
         try:
             from langgraph.checkpoint.memory import MemorySaver
-        except ImportError as error:  # pragma: no cover - depends on optional runtime dependency.
+        except ImportError as error:  # pragma: no cover - optional dependency.
             raise DependencyUnavailableError(
-                "langgraph is required to enable threaded in-memory chat history. Install the app dependencies first."
+                "langgraph is required to enable threaded in-memory chat history. "
+                "Install the app dependencies first."
             ) from error
 
         return MemorySaver()
@@ -169,16 +176,19 @@ def _load_skill_files(skills_dir: Path) -> dict[str, object]:
 
     try:
         from deepagents.backends.utils import create_file_data
-    except ImportError as error:  # pragma: no cover - depends on optional runtime dependency.
+    except ImportError as error:  # pragma: no cover - optional dependency.
         raise DependencyUnavailableError(
-            "deepagents is required to load project skill files. Install the app dependencies first."
+            "deepagents is required to load project skill files. "
+            "Install the app dependencies first."
         ) from error
 
     skill_files: dict[str, object] = {}
     for file_path in sorted(path for path in skills_dir.rglob("*") if path.is_file()):
         relative_path = file_path.relative_to(skills_dir).as_posix()
         virtual_path = f"/skills/{relative_path}"
-        skill_files[virtual_path] = create_file_data(file_path.read_text(encoding="utf-8"))
+        skill_files[virtual_path] = create_file_data(
+            file_path.read_text(encoding="utf-8")
+        )
     return skill_files
 
 
@@ -208,12 +218,8 @@ def _extract_retrieval_citations(result: object) -> list[RetrievalCitation]:
             tool_name = mapped_name if isinstance(mapped_name, str) else None
         if tool_name != "retrieve_pages":
             continue
-        raw_content = _message_content(message)
-        if not raw_content:
-            return []
-        try:
-            payload = json.loads(raw_content)
-        except JSONDecodeError:
+        payload = _extract_retrieval_payload(message)
+        if payload is None:
             return []
         results = payload.get("results", [])
         if not isinstance(results, list):
@@ -229,12 +235,23 @@ def _extract_retrieval_citations(result: object) -> list[RetrievalCitation]:
                     page_number=int(result_item.get("page_number", 0)),
                     page_uid=str(result_item.get("page_uid", "")),
                     file_path=str(result_item.get("file_path", "")),
+                    page_image_path=str(result_item.get("page_image_path", "")),
                     coarse_score=float(result_item.get("coarse_score", 0.0)),
                     rerank_score=float(result_item.get("rerank_score", 0.0)),
                 )
             )
         return citations
     return []
+
+
+def _extract_retrieval_payload(message: object) -> Mapping[str, object] | None:
+    artifact = getattr(message, "artifact", None)
+    if artifact is None and isinstance(message, Mapping):
+        mapped_artifact = message.get("artifact")
+        artifact = mapped_artifact if isinstance(mapped_artifact, Mapping) else None
+    if isinstance(artifact, Mapping):
+        return artifact
+    return None
 
 
 def _extract_messages(result: object) -> list[object]:

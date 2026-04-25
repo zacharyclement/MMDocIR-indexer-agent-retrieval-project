@@ -29,12 +29,16 @@ def rerank_candidates(
             page_number=candidate.page_number,
             page_uid=candidate.page_uid,
             file_path=candidate.file_path,
+            page_image_path=candidate.page_image_path,
             source_sha256=candidate.source_sha256,
             coarse_score=candidate.coarse_score,
             rerank_score=rerank_score,
         )
         existing_result = grouped_results.get(candidate.page_uid)
-        if existing_result is None or ranked_result.rerank_score > existing_result.rerank_score:
+        if (
+            existing_result is None
+            or ranked_result.rerank_score > existing_result.rerank_score
+        ):
             grouped_results[candidate.page_uid] = ranked_result
 
     ranked_results = sorted(

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from PIL import Image
 
@@ -13,7 +13,7 @@ from indexer.shared.models import RenderedPage
 
 try:
     import fitz
-except ImportError:  # pragma: no cover - exercised in runtime environments without pymupdf.
+except ImportError:  # pragma: no cover - depends on optional runtime dependency.
     fitz = None
 
 
@@ -49,3 +49,23 @@ class PdfPageRenderer:
             raise IndexingRuntimeError(
                 f"Failed to render PDF '{pdf_path.name}': {error}"
             ) from error
+
+
+def save_rendered_page_image(
+    page_image_dir: Path,
+    source_sha256: str,
+    rendered_page: RenderedPage,
+) -> Path:
+    """Persist one rendered page image to a stable PNG artifact path."""
+
+    image_directory = page_image_dir / source_sha256
+    image_path = image_directory / f"{rendered_page.page_number}.png"
+    try:
+        image_directory.mkdir(parents=True, exist_ok=True)
+        rendered_page.image.save(image_path, format="PNG")
+    except Exception as error:  # pragma: no cover - depends on filesystem runtime.
+        raise IndexingRuntimeError(
+            "Failed to persist rendered page image "
+            f"for page {rendered_page.page_number}: {error}"
+        ) from error
+    return image_path

@@ -8,6 +8,7 @@ from indexer.shared.models import PageInsertPoint, RenderedPage, TargetDocument
 def build_page_point(
     target_document: TargetDocument,
     rendered_page: RenderedPage,
+    page_image_path: str,
     patch_embeddings: list[list[float]],
     indexed_at: str,
     run_id: str,
@@ -21,6 +22,7 @@ def build_page_point(
         page_number=rendered_page.page_number,
         page_uid=page_uid,
         file_path=str(target_document.file_path),
+        page_image_path=page_image_path,
         embeddings=patch_embeddings,
         source_sha256=target_document.source_sha256,
         page_width=rendered_page.width,
