@@ -134,6 +134,39 @@ A page UID is derived as:
 doc_name::page::<page_number>
 ```
 
+### Vector Database Schema and Filtering
+
+Qdrant stores one point per rendered PDF page. The point vector is the page's ColPali multivector embedding, and the point payload stores the page metadata needed for retrieval, filtering, citations, and source previews.
+
+Schema Definition:
+
+- `doc_name`
+  - the source PDF filename; primarily used for exact document filtering, citations, evaluation joins, and human-readable debugging.
+- `domain`
+  - the manually assigned document category; used as an optional retrieval filter and as higher-level metadata for grouping documents by type.
+- `page_number`
+  - the zero-based page number from the rendered PDF; used for citations, source previews, and matching retrieved results back to page-level evidence.
+- `page_uid`
+  - a stable page identifier derived from `doc_name` and `page_number`; used to create the deterministic Qdrant point ID and to identify pages in traces and retrieval results.
+- `file_path`
+  - the local path to the original PDF; used for auditability and debugging when tracing an indexed point back to its source file.
+- `page_image_path`
+  - the local path to the persisted rendered page image; used by the retrieval tool and chat UI to show source-page previews.
+- `source_sha256`
+  - the SHA-256 hash of the original PDF bytes; used to fingerprint the exact file version that was indexed and to group persisted page images by source document content.
+- `page_width`
+  - the rendered page image width in pixels; used as page-render metadata for debugging and downstream display logic.
+- `page_height`
+  - the rendered page image height in pixels; used as page-render metadata for debugging and downstream display logic.
+- `indexed_at`
+  - the UTC timestamp for the indexing run that produced the point; used for auditability and index-report debugging.
+- `run_id`
+  - the unique identifier for the indexing run; used to correlate points, logs, and reports created during the same indexing execution.
+
+The primary retrieval filter for this project is `doc_name`. The benchmark and app structure assume that each question is associated with a specific source document, so constraining retrieval to that document is usually required for reliable answers. Some prompts are intentionally ambiguous outside of their document context, such as "what is in module one"; without the document-name filter, many unrelated pages across the corpus could look plausible.
+
+The schema also includes `domain` because it is useful metadata in a more realistic retrieval system. In a larger production corpus, an agent could use domain filters to narrow retrieval to document families such as guidebooks, academic papers, brochures, or reports. For this project, domain filtering is available, but document-name filtering is the main mechanism because the evaluation questions are document-specific.
+
 ### Stage 5: Outputs
 
 The insert layer creates a local Qdrant collection using multivector storage and cosine distance, then upserts one point per page. Indexing outputs include:
@@ -463,7 +496,12 @@ source .venv/bin/activate
 For app and indexing development:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .
+```
+then run 
+```bash
+pip install -e ".[dev,eval]"
+```
 ```
 
 Then install these two packages directly from GitHub:
@@ -477,9 +515,7 @@ This is currently required due to `colpali-engine` dependency resolution issues 
 
 If you also want to run the evaluation notebook and answer-quality judges:
 
-```bash
-pip install -e ".[dev,eval]"
-```
+
 
 ### 3. Configure Secrets
 
