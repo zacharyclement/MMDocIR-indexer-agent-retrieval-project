@@ -21,8 +21,6 @@ dependencies = [
     "qdrant-client==1.17.1",
     "torch>=2.2.0",
     "torchvision>=0.17.0",
-    "peft @ git+https://github.com/huggingface/peft",
-    "transformers @ git+https://github.com/huggingface/transformers",
     "uvicorn>=0.30.0",
 ]
 

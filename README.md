@@ -300,7 +300,20 @@ The notebook `eval/reporting.ipynb` loads those artifacts and provides:
 
 ## Architectural Choices
 
-## Architectural choices
+### Indexing architecture options considered
+
+The indexing architecture was chosen after comparing three broad approaches:
+
+- visual page indexing & retrieval with a ColPali-family model
+- text/OCR based indexing and text retrieval using parsed and chunked document content
+- hybrid retrieval indexing for text but stores charts, tables, and diagrams as images, useing multimodal retrieval
+
+This project starts with the visual approach because the source PDFs often contain information that depends on page layout, tables, charts, figures, and visual grouping. ColPali-style models preserve that page-level structure by producing multi-vector page embeddings instead of reducing the document to plain text chunks.
+
+The tradeoff is:
+* that visual retrieval is heavier. It creates a larger vector representation, needs more compute during indexing, and can be slower or more expensive at query time because retrieved page images may need to be passed through downstream models. 
+* A pure text pipeline is simpler and usually cheaper to index and query, but it can lose important evidence when the document relies on layout or visual content. 
+* A hybrid text-plus-image pipeline can reduce some of the cost while retaining visual evidence for charts, tables, and diagrams, but it adds more parsing logic, routing decisions, and indexing/retrieval complexity.
 
 ### Why use a ColPali-family vision retriever for indexing?
 
@@ -359,35 +372,41 @@ I would move from single-process page-by-page indexing toward:
 - batch rendering
 - batch encoding
 - parallel document workers
-- resumable indexing jobs
+- orchestrated, resumable indexing jobs with retries and durable state
+- GPU-backed retrieval and indexing workers, avoiding ColPali quantization when quality is more important than memory savings
 - explicit job metadata and monitoring
+- automated metadata extraction so documents do not need to be manually assigned in `domain_mapping.py`
 
 The current architecture already has clean stage boundaries, which makes this evolution straightforward.
 
 ### Storage and retrieval changes
 
-For a 100,000-document deployment, I would:
 
 - move from local Qdrant mode to a deployed Qdrant service
-- shard by collection or tenant as needed
+- partition or shard vector storage by collection, tenant, domain, or document family as needed
 - add stronger metadata indexes for domain and document filtering
+- tune the vector index type for scale, moving from flat/exhaustive search toward ANN indexes such as HNSW or IVF-flat depending on the vector database backend
+- test a text retrieval path alongside the image-based ColPali retrieval path, using a hybrid unstructured-text and image-embedding indexing pipeline
 - introduce caching for frequent queries and reranking inputs
 - tune candidate counts and rerank depth based on latency budgets
+- agentic filtering so the agent can infer and apply document/domain filters from the user question and conversation context
 
 ### Serving changes
 
-I would separate the web app from retrieval workers and model-serving concerns:
-
+- I would separate the web app from retrieval workers and model-serving concerns:
 - stateless API instances for chat serving
 - dedicated retrieval/model workers
 - queue-backed background indexing
+- remote artifact storage for source PDFs and rendered page images instead of assuming local filesystem access from the retriever
 - observability around latency, retrieval hit rate, and failure modes
 
 ### Evaluation changes
 
 At larger scale, I would keep the current evaluation design philosophy but change the operations:
 
-- maintain a curated benchmark set instead of evaluating the whole corpus every time
+- use observabilty platform datasets and run experiements through them
+- more closely monitor costs
+maintain a curated benchmark set instead of evaluating the whole corpus every time
 - sample by document type and domain
 - track regression dashboards over time
 - separate retrieval regression tests from LLM-judge answer audits
@@ -446,6 +465,15 @@ For app and indexing development:
 ```bash
 pip install -e ".[dev]"
 ```
+
+Then install these two packages directly from GitHub:
+
+```bash
+pip install "peft @ git+https://github.com/huggingface/peft"
+pip install "transformers @ git+https://github.com/huggingface/transformers"
+```
+
+This is currently required due to `colpali-engine` dependency resolution issues with published package versions.
 
 If you also want to run the evaluation notebook and answer-quality judges:
 
@@ -528,6 +556,16 @@ Recreate the collection before indexing:
 ```bash
 python -m indexer.main index --all --recreate-collection
 ```
+
+To run indexing on CPU explicitly, use:
+
+```bash
+INDEXER_DEVICE=cpu python -m indexer.main index --all --recreate-collection
+```
+
+If you get an error about being unable to upsert patches/pointers, use this CPU command.
+
+On CPU, this full indexing run typically takes about 2 hours.
 
 ### 7. Start the Chat App
 
