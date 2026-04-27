@@ -251,6 +251,18 @@ By default, `APP_RETRIEVAL_RERANK_LIMIT` is `10`, so only the top 10 reranked pa
 - the deep-agent graph
 - the in-memory checkpointer for threaded chat state
 
+### How LangChain Deep Agents Works
+
+The agent runtime is built with [`langchain-ai/deepagents`](https://github.com/langchain-ai/deepagents), which extends a LangGraph ReAct loop with the capabilities that long-horizon, tool-using agents typically need. On top of any tools the application registers, a deep agent ships with:
+
+- a planning tool (`write_todos`) the model can use to break a request into a structured todo list it maintains across reasoning steps
+- a sandboxed virtual filesystem (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`) for drafting and reusing longer artifacts without flooding the chat context
+- a subagent dispatch tool (`task`) for delegating work to isolated child agents with their own context windows
+- support for Anthropic-style "skills": markdown files with `name` / `description` / `allowed-tools` frontmatter that are mounted into the virtual filesystem and pulled in on demand when their description matches the request
+- a richer default system prompt and middleware stack (todo, filesystem, subagent, summarization, prompt caching) that teaches the model how to use those built-ins
+
+Because a deep agent is itself a LangGraph graph, standard LangGraph features such as state checkpointing, typed runtime context, and LangSmith tracing carry over. In this project, `create_deep_agent` is wired with the chat model, the `retrieve_pages` tool, a retrieval-focused system prompt, the project skills directory mounted under `/skills/`, an in-memory checkpointer for thread-scoped chat state, and an `AgentRuntimeContext` carrying the per-request domain and document filters.
+
 ### Online Request Flow
 
 A typical online request looks like this:
@@ -302,16 +314,24 @@ The evaluation combines two types of measurement.
 Deterministic retrieval metrics:
 
 - `initial_recall_at_k`
+  - fraction of the question's expected pages that appear anywhere in the top-`k` coarse Qdrant ANN candidates, measured before Python reranking.
 - `rerank_ndcg_at_k`
+  - normalized discounted cumulative gain over the top-`k` reranked pages using binary page relevance, which rewards placing expected pages near the top of the final ordering.
 - `rerank_recall_at_k`
+  - fraction of the question's expected pages that appear in the top-`k` results after MaxSim reranking.
 - `hit_rate_at_k`
+  - `1.0` if at least one expected page appears in the top-`k` reranked results and `0.0` otherwise, giving a strict per-question pass/fail signal.
 - retrieval tool call counts
+  - number of times the agent invoked the `retrieve_pages` tool during a question, used to track how often the agent retrieves and to surface looping or no-call behavior.
 
 Answer-quality evaluation:
 
 - correctness
+  - LLM-judge score comparing the model answer to the dataset's reference answer for factual correctness.
 - helpfulness
+  - LLM-judge score (OpenEvals RAG prompt) for whether the answer actually addresses the user's question in a useful way.
 - groundedness
+  - LLM-judge score (OpenEvals RAG prompt) for whether the claims in the answer are supported by the retrieved page context rather than hallucinated.
 
 Answer-quality scoring uses OpenEvals with Anthropic-backed LLM judges.
 
@@ -333,24 +353,21 @@ The notebook `eval/reporting.ipynb` loads those artifacts and provides:
 
 ## Architectural Choices
 
-### Indexing architecture options considered
+### Why visual page-level retrieval with a ColPali-family model?
 
-The indexing architecture was chosen after comparing three broad approaches:
+The indexing and retrieval architecture was chosen after comparing three broad approaches:
 
-- visual page indexing & retrieval with a ColPali-family model
-- text/OCR based indexing and text retrieval using parsed and chunked document content
-- hybrid retrieval indexing for text but stores charts, tables, and diagrams as images, useing multimodal retrieval
+- **Visual page indexing** with a ColPali-family model
+- **Text/OCR-based** indexing using parsed and chunked document content
+- **Hybrid** indexing that stores text for prose and images for charts, tables, and diagrams
 
-This project starts with the visual approach because the source PDFs often contain information that depends on page layout, tables, charts, figures, and visual grouping. ColPali-style models preserve that page-level structure by producing multi-vector page embeddings instead of reducing the document to plain text chunks.
+This project starts with the visual approach because the source PDFs frequently store critical evidence in charts, tables, figures, slide-style layouts, and visually grouped content spread across a page — material that is hard to preserve when a document is flattened into plain text chunks. ColPali-family models (with the current default in the ColQwen family, `vidore/colqwen2.5-v0.2`) produce multi-vector page embeddings that retain that layout and visual structure. The retrieval unit is the full rendered page, which avoids dropping layout cues that make the content understandable and matches the multimodal retriever's representation directly.
 
-The tradeoff is:
-* that visual retrieval is heavier. It creates a larger vector representation, needs more compute during indexing, and can be slower or more expensive at query time because retrieved page images may need to be passed through downstream models. 
-* A pure text pipeline is simpler and usually cheaper to index and query, but it can lose important evidence when the document relies on layout or visual content. 
-* A hybrid text-plus-image pipeline can reduce some of the cost while retaining visual evidence for charts, tables, and diagrams, but it adds more parsing logic, routing decisions, and indexing/retrieval complexity.
+The tradeoffs are:
 
-### Why use a ColPali-family vision retriever for indexing?
-
-The indexer is built around a ColPali-family model, with current defaults pointing at the ColQwen family. That choice matches the central problem the repository is trying to solve: these PDFs often store critical evidence in charts, tables, figures, slide layouts, and visually grouped content spread across a page. A vision-first retriever is a better fit for that material than a text-only embedding model because it can preserve layout and visual structure instead of flattening the document into plain text.
+- **Visual retrieval is heavier.** It produces a larger vector representation, needs more compute during indexing, and can be slower or more expensive at query time because retrieved page images may need to be passed through downstream models.
+- **Pure text retrieval is simpler and cheaper** to index and query, but it can lose important evidence when the document relies on layout or visual content.
+- **Hybrid text-plus-image retrieval** can recover some of that cost while retaining visual evidence for charts, tables, and diagrams, but it adds parsing logic, routing decisions, and indexing/retrieval complexity that this project deliberately avoids during the prototype phase.
 
 ### Why optimize model loading for local hardware?
 
@@ -364,19 +381,13 @@ The storage unit is the page, but the representation inside each page record is 
 - late-interaction scoring can still happen at the patch level
 - the retriever preserves visual detail without exploding the collection into one row per patch
 
-### Why persist page images during indexing?
+### Why keep rendered page images end-to-end?
 
-The indexer writes rendered page images to disk as part of the indexing flow so downstream systems can reuse the exact visual artifact that was indexed. That supports retrieval debugging, source previews in the UI, and evaluation workflows without re-rendering PDFs on every request.
+The indexer renders each PDF page to an image, persists it to disk, and the retrieval tool returns those same images alongside ranked results. Keeping one canonical visual artifact for each indexed page means downstream systems never have to re-render PDFs at query time and always inspect the exact image the retriever scored. The same artifact backs:
 
-
-
-### Why page-level retrieval instead of text chunking?
-
-This repository targets PDFs where evidence often depends on layout and visual grouping. A chart, table, figure, slide-style layout, or visually grouped block of content is hard to preserve if the document is reduced to plain text chunks. Page-level multivector retrieval preserves the full page as the retrieval unit, avoids dropping the layout cues that make the content understandable, and fits the multimodal retriever model better.
-
-### Why return page images with retrieval results?
-
-Returning page images keeps the retrieved evidence inspectable for both the model and the human operator. It also makes the UI’s source panel and debugging workflows much more useful when retrieval quality is uneven.
+- the retrieval tool's image output for grounded answering
+- the chat UI's source panel for human inspection
+- retrieval debugging and evaluation workflows that need the exact page that was indexed
 
 ### Why Qdrant local mode?
 
@@ -386,63 +397,70 @@ Qdrant local mode keeps the default development workflow simple:
 - multivector collections are supported directly
 - experiments can be isolated with collection names
 
-### Why FastAPI plus Deep Agents / LangGraph / LangChain?
+### Why Deep Agents on top of LangGraph?
 
-FastAPI provides a very thin web layer. Deep Agents, LangGraph, and LangChain provide the agent abstraction, state/checkpointing, and model/tool integration needed for a retrieval-focused assistant without forcing the retrieval code to live inside the web entrypoint.
+The orchestration layer uses `langchain-ai/deepagents` rather than a hand-rolled LangGraph ReAct loop because the retrieval task benefits from the capabilities a deep agent ships with:
+
+- **Planning is built in.** Even simple corpus questions sometimes require multiple steps: retrieve, inspect, optionally refine the query, retrieve again, then answer. A built-in todo/planning tool gives the agent a persistent place to track that plan instead of relying on chat history alone, which makes multi-step retrieval behavior more stable as task complexity grows.
+- **Skills replace monolithic prompts.** Retrieval guidance — when to call the tool, how to filter by domain, how to cite — lives as a markdown skill file under `.agents/skills/` rather than as ever-growing system-prompt text. New skills can be added by dropping a file with `name`, `description`, and `allowed-tools` frontmatter without touching agent code, which keeps the system prompt compact and the project easy to extend.
+- **A virtual filesystem provides scratch space.** When a question pulls in many pages or a longer reasoning chain, the agent can stash and cross-reference notes in its filesystem instead of treating the chat window as scratch memory.
+- **Headroom for richer agents.** Subagent dispatch, parallel tool execution, summarization middleware, and prompt caching come standard, so adding capabilities like a query rewriter, a grader, or a parallel multi-document search later is a configuration change rather than a rewrite.
+- **Still LangGraph underneath.** Deep agents are LangGraph graphs, so checkpointing (`MemorySaver`), typed runtime context (`context_schema=AgentRuntimeContext` for per-request filters), and LangSmith tracing all work as expected, and a plain LangGraph ReAct loop remains a viable downgrade path if the extra machinery is ever overkill.
+
+FastAPI is kept as a deliberately thin web layer in front of this graph: the chat endpoint translates HTTP requests into `DeepAgentChatService.chat()` calls and translates the result back, which keeps retrieval and agent logic out of the web entrypoint.
 
 ### Why keep evaluation in-process and combine deterministic metrics with LLM judges?
 
 Running evaluation in-process against `DeepAgentChatService` keeps the measurement path close to the real application logic. Deterministic retrieval metrics measure whether the system found and ranked the right evidence, while LLM judges measure whether the final answer was useful and correct.
 
-## Scaling to 100,000 documents
+## Scaling to 100,000 Documents
 
-To scale this system from a local prototype to a much larger corpus, I would separate concerns across indexing, storage, retrieval serving, and evaluation.
+To scale this system from the current 25-document local prototype to a 100,000-document production deployment, I would separate concerns across indexing, storage, retrieval serving, and evaluation. The bullets below cover both the scale changes and the operational hardening that turns the prototype into a production-ready system.
 
 ### Indexing changes
 
-I would move from single-process page-by-page indexing toward:
+I would move from single-process, page-by-page indexing toward:
 
-- batch rendering
-- batch encoding
-- parallel document workers
-- orchestrated, resumable indexing jobs with retries and durable state
-- GPU-backed retrieval and indexing workers, avoiding ColPali quantization when quality is more important than memory savings
-- explicit job metadata and monitoring
-- automated metadata extraction so documents do not need to be manually assigned in `domain_mapping.py`
+- batch rendering and batch encoding to amortize model load and I/O overhead
+- parallel document workers driven by a job queue rather than a single Python process
+- orchestrated, resumable indexing jobs with retries, durable state, and explicit run metadata
+- GPU-backed encoding workers, preferring full-precision ColPali weights when retrieval quality matters more than memory savings
+- automated domain and metadata extraction so documents do not have to be hand-registered in `domain_mapping.py`
+- monitoring on indexing throughput, failure rate, and per-document encode latency
 
 The current architecture already has clean stage boundaries, which makes this evolution straightforward.
 
 ### Storage and retrieval changes
 
-
-- move from local Qdrant mode to a deployed Qdrant service
-- partition or shard vector storage by collection, tenant, domain, or document family as needed
-- add stronger metadata indexes for domain and document filtering
-- tune the vector index type for scale, moving from flat/exhaustive search toward ANN indexes such as HNSW or IVF-flat depending on the vector database backend
-- test a text retrieval path alongside the image-based ColPali retrieval path, using a hybrid unstructured-text and image-embedding indexing pipeline
-- introduce caching for frequent queries and reranking inputs
-- tune candidate counts and rerank depth based on latency budgets
-- agentic filtering so the agent can infer and apply document/domain filters from the user question and conversation context
+- move from local Qdrant mode to a deployed Qdrant service (or an equivalent managed multivector store)
+- partition or shard vector storage by collection, tenant, domain, or document family as the corpus grows
+- add stronger payload indexes for the high-cardinality `doc_name` filter and the `domain` filter
+- tune the underlying ANN index parameters (e.g., HNSW `m`, `ef_construct`, `ef`) against measured latency, recall, and memory budgets
+- test a hybrid retrieval path that pairs text-chunk retrieval with the visual ColPali path, with a router or fusion step deciding when each contributes
+- cache frequent queries and reranking inputs to absorb repeat traffic
+- tune coarse candidate counts and rerank depth against measured latency budgets rather than fixed defaults
+- add agentic filtering so the agent can infer and apply `domain` or `doc_name` filters directly from the user question and conversation context, instead of relying on UI-supplied filters alone
 
 ### Serving changes
 
-- I would separate the web app from retrieval workers and model-serving concerns:
-- stateless API instances for chat serving
-- dedicated retrieval/model workers
-- queue-backed background indexing
-- remote artifact storage for source PDFs and rendered page images instead of assuming local filesystem access from the retriever
-- observability around latency, retrieval hit rate, and failure modes
+I would separate the web app from retrieval workers and model-serving concerns:
+
+- stateless API instances for chat serving, sized independently of the model workers
+- dedicated retrieval/model workers behind an internal service interface
+- queue-backed background indexing instead of in-process indexing runs
+- remote artifact storage (e.g., object store) for source PDFs and rendered page images so retrieval does not assume local filesystem access
+- observability on latency, retrieval hit rate, judge scores, and failure modes, with alerting on regressions
 
 ### Evaluation changes
 
-At larger scale, I would keep the current evaluation design philosophy but change the operations:
+At larger scale I would keep the current evaluation design philosophy but change the operations:
 
-- use observabilty platform datasets and run experiements through them
-- more closely monitor costs
-maintain a curated benchmark set instead of evaluating the whole corpus every time
-- sample by document type and domain
-- track regression dashboards over time
-- separate retrieval regression tests from LLM-judge answer audits
+- maintain a curated benchmark set instead of evaluating the whole corpus on every run
+- sample new evaluation cases by document type and domain so coverage stays balanced as the corpus grows
+- run experiments through an observability/eval platform with persisted datasets and side-by-side run comparisons
+- track regression dashboards for retrieval metrics and judge scores over time
+- separate fast retrieval regression tests (cheap, deterministic) from periodic LLM-judge answer audits (slow, costly)
+- monitor judge token usage and cost as the benchmark set grows
 
 ## Code Design Patterns
 S.O.L.I.D. design principals are followed throughout the codebase to ensure maintainability, scalability, and testability.
