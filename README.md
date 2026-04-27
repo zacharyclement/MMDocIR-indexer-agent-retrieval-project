@@ -47,6 +47,11 @@ Retrieval quality on the same run:
 - hit rate@k mean: `0.95`
 - retrieval tool call count mean: `1.10`
 
+Latency and cost on the same run:
+
+- average latency: `19.9s`
+- average cost per run: `$0.05`
+
 These values come from the run-level analysis shown in `eval/reporting.ipynb`, which is the source of truth for the summary presented here.
 
 ## System Overview
