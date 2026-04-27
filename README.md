@@ -2,13 +2,12 @@
 
 This repository is a local-first multimodal indexer and retrieval and question-answering system for PDFs. It combines a page-level visual indexer, a retrieval-focused agent, and an evaluation pipeline so you can index a document collection, ask grounded questions over it, and measure both retrieval quality and answer quality.
 
-The defining retrieval path is ColPali-style visual search over rendered PDF pages: documents are indexed as page images with multivector embeddings rather than OCR text, parsed text, or text chunks.
+The defining retrieval path is ColPali-family visual retrieval over rendered PDF pages: documents are indexed as page images with multivector embeddings rather than OCR text, parsed text, or text chunks.
 
 At a high level, the system:
 
- - indexes MMDocIR PDFs as rendered page-image embeddings in a local Qdrant multivector collection (see [Source Data](#Source-Data))
- - retrieves whole rendered pages instead of text chunks
- - uses an agent with a single retrieval tool to answer questions over the indexed corpus
+ - indexes MMDocIR PDFs as ColPali-family multivector embeddings of rendered page images in a local Qdrant collection (see [Source Data](#Source-Data))
+ - uses an agent with a single retrieval tool that searches ColPali-family page-image embeddings and answers from retrieved rendered pages
  - evaluates the full stack with deterministic retrieval metrics and answer-quality judges
 
 ![System Overview](system-design.png)
