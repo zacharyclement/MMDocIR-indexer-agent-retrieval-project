@@ -1,6 +1,8 @@
-# Multimodal PDF Retrieval Agent
+# Multimodal PDF Indexer and Retrieval Agent
 
-This repository is a local-first multimodal retrieval and question-answering system for PDFs. It combines a page-level visual indexer, a retrieval-focused agent, and an evaluation pipeline so you can index a document collection, ask grounded questions over it, and measure both retrieval quality and answer quality.
+This repository is a local-first multimodal indexer and retrieval and question-answering system for PDFs. It combines a page-level visual indexer, a retrieval-focused agent, and an evaluation pipeline so you can index a document collection, ask grounded questions over it, and measure both retrieval quality and answer quality.
+
+The defining retrieval path is ColPali-style visual search over rendered PDF pages: documents are indexed as page images with multivector embeddings rather than OCR text, parsed text, or text chunks.
 
 At a high level, the system:
 
@@ -419,8 +421,6 @@ To scale this system from the current 25-document local prototype to a 100,000-d
 
 ### Indexing changes
 
-I would move from single-process, page-by-page indexing toward:
-
 - batch rendering and batch encoding to amortize model load and I/O overhead
 - parallel document workers driven by a job queue rather than a single Python process
 - orchestrated, resumable indexing jobs with retries, durable state, and explicit run metadata
@@ -443,8 +443,7 @@ The current architecture already has clean stage boundaries, which makes this ev
 
 ### Serving changes
 
-I would separate the web app from retrieval workers and model-serving concerns:
-
+- separate the web app from retrieval workers and model-serving concerns:
 - stateless API instances for chat serving, sized independently of the model workers
 - dedicated retrieval/model workers behind an internal service interface
 - queue-backed background indexing instead of in-process indexing runs
