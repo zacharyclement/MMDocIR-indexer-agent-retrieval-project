@@ -6,7 +6,7 @@ The defining retrieval path is ColPali-style visual search over rendered PDF pag
 
 At a high level, the system:
 
- - indexes MMDocIR PDFs into a local Qdrant multivector collection (see [Source Data](#Source-Data))
+ - indexes MMDocIR PDFs as rendered page-image embeddings in a local Qdrant multivector collection (see [Source Data](#Source-Data))
  - retrieves whole rendered pages instead of text chunks
  - uses an agent with a single retrieval tool to answer questions over the indexed corpus
  - evaluates the full stack with deterministic retrieval metrics and answer-quality judges
